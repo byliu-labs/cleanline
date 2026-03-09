@@ -1,6 +1,6 @@
 # permission-hooks
 
-Claude Code plugin that provides three permission hooks to reduce prompt fatigue:
+Claude Code plugin that provides three permission hooks to reduce prompt fatigue.
 
 ## Hooks
 
@@ -8,9 +8,9 @@ Claude Code plugin that provides three permission hooks to reduce prompt fatigue
 
 **Event:** `PreToolUse` on `WebFetch`
 
-Auto-approves WebFetch requests to domains already in your sandbox allowlist (`~/.claude/settings.json` → `sandbox.network.allowedDomains`) plus extra documentation domains defined in `permission-config.json`.
+Auto-approves WebFetch requests to domains already in your sandbox allowlist (`~/.claude/settings.json` → `sandbox.network.allowedDomains`) plus extra documentation domains defined in `permission-config.json` and any community profile domains from `~/.claude/hooks/profiles.lock.json`.
 
-### 2. Bash Alias Resolution + Command Equivalence (`bash-gate.sh`)
+### 2. Bash Alias Resolution + Command Mapping (`bash-gate.sh`)
 
 **Event:** `PreToolUse` on `Bash`
 
@@ -18,7 +18,9 @@ Two layers of command normalization:
 
 **Single-word aliases:** When Claude runs a versioned binary like `python3.13`, the hook resolves it to its canonical name (`python`) and checks if that canonical name is in your permission allow list. If `Bash(python *)` is allowed, then `python3.13 script.py` is auto-approved.
 
-**Multi-word equivalences:** When Claude runs a command like `npx jest --coverage`, the hook checks `commandEquivalences` in `permission-config.json`. If `npx jest` maps to `npm test` and `Bash(npm test *)` is in your allow list, the command is auto-approved. Matching is token-exact — `npx jest` will NOT match `npx jester`.
+**Multi-word command mappings:** When Claude runs a command like `npx jest --coverage`, the hook checks `commandMappings` in `permission-config.json`. If `npx jest` maps to `npm test` and `Bash(npm test *)` is in your allow list, the command is auto-approved. Matching is token-exact — `npx jest` will NOT match `npx jester`.
+
+Both layers also check `~/.claude/hooks/profiles.lock.json` (managed by the CLI) as a fallback if no match is found in the local config.
 
 Compound commands (pipes, `&&`, `;`, etc.) are skipped — they go through normal permission flow.
 
@@ -40,13 +42,39 @@ Edit `hooks/permission-config.json` to customize:
   "bashAliases": {
     "python3.13": "python",
     "node20": "node"
+  },
+  "commandMappings": {
+    "npm test": ["npx jest", "yarn test"]
   }
 }
 ```
 
 - **`webfetch.extraDomains`** — additional domains to auto-approve (supports `*.` wildcards)
 - **`bashAliases`** — maps versioned/aliased binaries to their canonical names
-- **`commandEquivalences`** — maps canonical commands to lists of equivalent multi-word commands (e.g., `"npm test": ["npx jest", "yarn test"]`)
+- **`commandMappings`** — maps canonical commands to lists of equivalent multi-word commands
+
+## Profile System
+
+Community profiles extend the config with shared rule sets. The `claude-hooks` CLI manages profiles as composable layers:
+
+```bash
+uv run claude-hooks setup           # First-time setup
+uv run claude-hooks init <source>   # Add a profile
+uv run claude-hooks status          # Show installed profiles + audit stats
+uv run claude-hooks suggest         # Propose config changes from usage data
+```
+
+Profiles merge into `~/.claude/hooks/profiles.lock.json`. Hooks read both the local config and the lock file.
+
+## Audit Logging
+
+All hook decisions are logged to `~/.claude/hooks/hook.jsonl` as JSONL:
+
+```json
+{"ts":"2025-03-09T12:00:00Z","tool":"Bash","input":"python3 script.py","decision":"allow","matched_rule":"alias:python3->python"}
+```
+
+The `suggest` command analyzes this data to propose config additions for frequently-prompted commands.
 
 ## Requirements
 

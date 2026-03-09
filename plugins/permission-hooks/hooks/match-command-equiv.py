@@ -1,14 +1,18 @@
 #!/usr/bin/env python3
-"""Match a command against multi-word equivalences.
+"""Match a command against multi-word command mappings.
 
-Usage: match-command-equiv.py <command> <config-file>
+Usage: match-command-equiv.py <command> <config-file> [json-path-prefix]
 
-Reads commandEquivalences from config, checks if the command matches any
-alias, and prints the canonical form if so.
+Reads commandMappings (or legacy commandEquivalences) from config, checks if
+the command matches any alias, and prints the canonical form if so.
+
+The optional json-path-prefix lets you navigate into nested JSON before
+looking for the mappings key. For example, passing "merged" reads from
+config["merged"]["commandMappings"].
 
 Example config:
   {
-    "commandEquivalences": {
+    "commandMappings": {
       "npm test": ["npx jest", "yarn test", "pnpm test"]
     }
   }
@@ -24,49 +28,8 @@ import os
 import shlex
 import sys
 
-METACHARACTERS = {"&&", "||", ";", "|", "`", "$(", ">(", "<(", "{", "}"}
-
-
-def has_metacharacters(cmd: str) -> bool:
-    for meta in METACHARACTERS:
-        if meta in cmd:
-            return True
-    return False
-
-
-def unwrap_command(argv: list[str]) -> list[str]:
-    """Strip env/timeout wrappers to get the real command tokens."""
-    if not argv:
-        return []
-
-    binary = os.path.basename(argv[0])
-
-    if binary == "env" and len(argv) > 1:
-        i = 1
-        while i < len(argv):
-            arg = argv[i]
-            if arg == "--":
-                return argv[i + 1:]
-            if arg.startswith("-") or "=" in arg:
-                i += 1
-                continue
-            return argv[i:]
-        return []
-
-    if binary == "timeout" and len(argv) > 1:
-        i = 1
-        while i < len(argv):
-            arg = argv[i]
-            if arg == "--":
-                return argv[i + 1:]
-            if arg.startswith("-"):
-                i += 1
-                continue
-            # First non-flag arg is the duration — skip it
-            return argv[i + 1:]
-        return []
-
-    return argv
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from bash_utils import has_metacharacters, unwrap_command
 
 
 def tokens_prefix_match(cmd_tokens: list[str], alias_tokens: list[str]) -> bool:
@@ -77,7 +40,7 @@ def tokens_prefix_match(cmd_tokens: list[str], alias_tokens: list[str]) -> bool:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
+    if len(sys.argv) < 3 or len(sys.argv) > 4:
         return 1
 
     cmd = sys.argv[1]
@@ -107,14 +70,21 @@ def main() -> int:
     except (OSError, json.JSONDecodeError):
         return 1
 
-    equivalences = config.get("commandEquivalences", {})
-    if not equivalences:
+    # Navigate to nested path if provided (e.g., "merged")
+    root = config
+    if len(sys.argv) > 3:
+        for key in sys.argv[3].split("."):
+            root = root.get(key, {})
+
+    # Support both new name and legacy name
+    mappings = root.get("commandMappings", root.get("commandEquivalences", {}))
+    if not mappings:
         return 1
 
     # Build inverted lookup: {alias_tokens_tuple: canonical}
     # Sort longest-first for greedy matching
     lookup: list[tuple[list[str], str]] = []
-    for canonical, aliases in equivalences.items():
+    for canonical, aliases in mappings.items():
         if not isinstance(aliases, list):
             continue
         for alias in aliases:

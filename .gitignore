@@ -11,6 +11,9 @@ Thumbs.db
 # Python
 __pycache__/
 *.pyc
+.venv/
+.pytest_cache/
+pytest-of-*/
 
 # Temp
 *.tmp

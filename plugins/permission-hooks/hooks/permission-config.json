@@ -19,7 +19,7 @@
     "python3.13": "python",
     "python3.14": "python"
   },
-  "commandEquivalences": {
+  "commandMappings": {
     "npm test": ["npx jest", "yarn test", "pnpm test"],
     "pip install": ["pip3 install"]
   }

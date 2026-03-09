@@ -1,16 +1,20 @@
 #!/bin/bash
 # PreToolUse hook for Bash: metacharacter rejection + alias resolution +
-# multi-word command equivalence.
+# multi-word command mapping.
 #
 # Auto-approves aliased commands (e.g., python3.13 → python) and equivalent
 # multi-word commands (e.g., "npx jest" → "npm test") when the canonical
 # form is already in the settings.json allow list.
 #
+# Reads from two config sources:
+#   1. permission-config.json (user's own rules)
+#   2. ~/.claude/hooks/profiles.lock.json (profile-managed rules under "merged")
+#
 # Decision flow:
 #   Step 1: METACHARACTER REJECTION — compound commands → exit silently
 #   Step 2: NORMALIZE — shlex-based Python helper extracts binary name
-#   Step 3: ALIAS LOOKUP — check against bashAliases → allow if canonical is permitted
-#   Step 4: MULTI-WORD EQUIVALENCE — check commandEquivalences → allow if canonical is permitted
+#   Step 3: ALIAS LOOKUP — check bashAliases in config, then lock file
+#   Step 4: MULTI-WORD COMMAND MAPPING — check commandMappings in config, then lock file
 #
 # If no decision made: exits silently (normal permission flow)
 #
@@ -22,8 +26,43 @@ set -euo pipefail
 HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 CONFIG="$HOOK_DIR/permission-config.json"
+LOCKFILE="$HOME/.claude/hooks/profiles.lock.json"
+AUDIT_LOG="$HOME/.claude/hooks/hook.jsonl"
 
 INPUT=$(cat)
+
+# ============================================================================
+# AUDIT LOGGING
+# Minimal structured log — CLI enriches with provenance at query time.
+# ============================================================================
+log_decision() {
+  local tool="$1" input="$2" decision="$3" rule="$4"
+  (
+    mkdir -p "$(dirname "$AUDIT_LOG")" 2>/dev/null
+    printf '{"ts":"%s","tool":"%s","input":"%s","decision":"%s","matched_rule":"%s"}\n' \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tool" "$input" "$decision" "$rule" \
+      >> "$AUDIT_LOG"
+  ) 2>/dev/null || true
+}
+
+# ============================================================================
+# SETTINGS CHECK HELPER
+# Returns 0 if the canonical command is in the settings.json allow list.
+# ============================================================================
+check_settings_allow() {
+  local canon="$1"
+  if [ ! -f "$SETTINGS" ]; then
+    return 1
+  fi
+  local matched
+  matched=$(jq -r --arg canon "$canon" \
+    '[.permissions.allow // [] | .[] |
+      select(
+        . == "Bash(" + $canon + " *)" or
+        . == "Bash(" + $canon + ")"
+      )] | length' "$SETTINGS" 2>/dev/null) || return 1
+  [ "$matched" -gt 0 ]
+}
 
 # Extract the command
 COMMAND=$(echo "$INPUT" | jq -r '.tool_input.command // empty' 2>/dev/null)
@@ -45,11 +84,12 @@ if echo "$COMMAND" | grep -qF '&&' || \
    echo "$COMMAND" | grep -qF '<(' || \
    echo "$COMMAND" | grep -qF '{'  || \
    echo "$COMMAND" | grep -qF '}'; then
+  log_decision "Bash" "$COMMAND" "passthrough" "metacharacter"
   exit 0
 fi
 
 # ============================================================================
-# STEP 3: NORMALIZE via Python helper
+# STEP 2: NORMALIZE via Python helper
 # ============================================================================
 BINARY=$("$HOOK_DIR/normalize-bash-cmd.py" "$COMMAND" 2>/dev/null) || exit 0
 if [ -z "$BINARY" ]; then
@@ -57,48 +97,47 @@ if [ -z "$BINARY" ]; then
 fi
 
 # ============================================================================
-# STEP 4: ALIAS LOOKUP
+# STEP 3: ALIAS LOOKUP
 # Check if binary is an alias for a canonical name that's in the allow list.
+# First check permission-config.json, then fall through to lock file.
 # ============================================================================
-if [ ! -f "$CONFIG" ]; then
+CANONICAL=""
+if [ -f "$CONFIG" ]; then
+  CANONICAL=$(jq -r --arg bin "$BINARY" '.bashAliases[$bin] // empty' "$CONFIG" 2>/dev/null)
+fi
+
+# Fall through to lock file if no match in local config
+if [ -z "$CANONICAL" ] && [ -f "$LOCKFILE" ]; then
+  CANONICAL=$(jq -r --arg bin "$BINARY" '.merged.bashAliases[$bin] // empty' "$LOCKFILE" 2>/dev/null)
+fi
+
+if [ -n "$CANONICAL" ] && check_settings_allow "$CANONICAL"; then
+  log_decision "Bash" "$COMMAND" "allow" "alias:$BINARY->$CANONICAL"
+  echo '{"decision":"allow"}'
   exit 0
 fi
 
-CANONICAL=$(jq -r --arg bin "$BINARY" '.bashAliases[$bin] // empty' "$CONFIG" 2>/dev/null)
-
-# Check if the canonical binary is in the settings.json allow list
-# Match patterns like "Bash(python *)" or "Bash(python)"
-if [ -n "$CANONICAL" ] && [ -f "$SETTINGS" ]; then
-  MATCHED=$(jq -r --arg canon "$CANONICAL" \
-    '[.permissions.allow // [] | .[] |
-      select(
-        . == "Bash(" + $canon + " *)" or
-        . == "Bash(" + $canon + ")"
-      )] | length' "$SETTINGS" 2>/dev/null) || exit 0
-
-  if [ "$MATCHED" -gt 0 ]; then
-    echo '{"decision":"allow"}'
-    exit 0
-  fi
-fi
-
 # ============================================================================
-# STEP 5: MULTI-WORD COMMAND EQUIVALENCE
+# STEP 4: MULTI-WORD COMMAND MAPPING
 # Check if command matches a multi-word alias (e.g., "npx jest" → "npm test")
+# First check permission-config.json, then fall through to lock file.
 # ============================================================================
-CANONICAL=$("$HOOK_DIR/match-command-equiv.py" "$COMMAND" "$CONFIG" 2>/dev/null) || true
-if [ -n "$CANONICAL" ] && [ -f "$SETTINGS" ]; then
-  MATCHED=$(jq -r --arg canon "$CANONICAL" \
-    '[.permissions.allow // [] | .[] |
-      select(
-        . == "Bash(" + $canon + " *)" or
-        . == "Bash(" + $canon + ")"
-      )] | length' "$SETTINGS" 2>/dev/null) || exit 0
-
-  if [ "$MATCHED" -gt 0 ]; then
-    echo '{"decision":"allow"}'
-    exit 0
-  fi
+CANONICAL=""
+if [ -f "$CONFIG" ]; then
+  CANONICAL=$("$HOOK_DIR/match-command-equiv.py" "$COMMAND" "$CONFIG" 2>/dev/null) || true
 fi
 
+# Fall through to lock file if no match in local config
+if [ -z "$CANONICAL" ] && [ -f "$LOCKFILE" ]; then
+  CANONICAL=$("$HOOK_DIR/match-command-equiv.py" "$COMMAND" "$LOCKFILE" "merged" 2>/dev/null) || true
+fi
+
+if [ -n "$CANONICAL" ] && check_settings_allow "$CANONICAL"; then
+  log_decision "Bash" "$COMMAND" "allow" "mapping:$CANONICAL"
+  echo '{"decision":"allow"}'
+  exit 0
+fi
+
+# No match — log passthrough and defer to normal permission flow
+log_decision "Bash" "$COMMAND" "passthrough" "no_match"
 exit 0
