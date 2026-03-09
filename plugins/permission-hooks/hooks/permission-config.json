@@ -1,0 +1,22 @@
+{
+  "webfetch": {
+    "extraDomains": [
+      "*.w3.org",
+      "*.rust-lang.org",
+      "*.docs.rs",
+      "*.developer.apple.com",
+      "*.learn.microsoft.com",
+      "*.devdocs.io",
+      "*.man7.org",
+      "*.cppreference.com"
+    ]
+  },
+  "bashAliases": {
+    "python3": "python",
+    "python3.10": "python",
+    "python3.11": "python",
+    "python3.12": "python",
+    "python3.13": "python",
+    "python3.14": "python"
+  }
+}
