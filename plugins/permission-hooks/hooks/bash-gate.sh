@@ -1,13 +1,16 @@
 #!/bin/bash
-# PreToolUse hook for Bash: metacharacter rejection + alias resolution.
+# PreToolUse hook for Bash: metacharacter rejection + alias resolution +
+# multi-word command equivalence.
 #
-# Auto-approves aliased commands (e.g., python3.13 → python) when the
-# canonical binary is already in the settings.json allow list.
+# Auto-approves aliased commands (e.g., python3.13 → python) and equivalent
+# multi-word commands (e.g., "npx jest" → "npm test") when the canonical
+# form is already in the settings.json allow list.
 #
 # Decision flow:
 #   Step 1: METACHARACTER REJECTION — compound commands → exit silently
 #   Step 2: NORMALIZE — shlex-based Python helper extracts binary name
 #   Step 3: ALIAS LOOKUP — check against bashAliases → allow if canonical is permitted
+#   Step 4: MULTI-WORD EQUIVALENCE — check commandEquivalences → allow if canonical is permitted
 #
 # If no decision made: exits silently (normal permission flow)
 #
@@ -62,14 +65,29 @@ if [ ! -f "$CONFIG" ]; then
 fi
 
 CANONICAL=$(jq -r --arg bin "$BINARY" '.bashAliases[$bin] // empty' "$CONFIG" 2>/dev/null)
-if [ -z "$CANONICAL" ]; then
-  exit 0
-fi
 
 # Check if the canonical binary is in the settings.json allow list
 # Match patterns like "Bash(python *)" or "Bash(python)"
-if [ -f "$SETTINGS" ]; then
-  # Check for "Bash(<canonical> *)" or "Bash(<canonical>)" in the allow list
+if [ -n "$CANONICAL" ] && [ -f "$SETTINGS" ]; then
+  MATCHED=$(jq -r --arg canon "$CANONICAL" \
+    '[.permissions.allow // [] | .[] |
+      select(
+        . == "Bash(" + $canon + " *)" or
+        . == "Bash(" + $canon + ")"
+      )] | length' "$SETTINGS" 2>/dev/null) || exit 0
+
+  if [ "$MATCHED" -gt 0 ]; then
+    echo '{"decision":"allow"}'
+    exit 0
+  fi
+fi
+
+# ============================================================================
+# STEP 5: MULTI-WORD COMMAND EQUIVALENCE
+# Check if command matches a multi-word alias (e.g., "npx jest" → "npm test")
+# ============================================================================
+CANONICAL=$("$HOOK_DIR/match-command-equiv.py" "$COMMAND" "$CONFIG" 2>/dev/null) || true
+if [ -n "$CANONICAL" ] && [ -f "$SETTINGS" ]; then
   MATCHED=$(jq -r --arg canon "$CANONICAL" \
     '[.permissions.allow // [] | .[] |
       select(

@@ -10,11 +10,15 @@ Claude Code plugin that provides three permission hooks to reduce prompt fatigue
 
 Auto-approves WebFetch requests to domains already in your sandbox allowlist (`~/.claude/settings.json` → `sandbox.network.allowedDomains`) plus extra documentation domains defined in `permission-config.json`.
 
-### 2. Bash Alias Resolution (`bash-gate.sh`)
+### 2. Bash Alias Resolution + Command Equivalence (`bash-gate.sh`)
 
 **Event:** `PreToolUse` on `Bash`
 
-When Claude runs a versioned binary like `python3.13`, this hook resolves it to its canonical name (`python`) and checks if that canonical name is in your permission allow list. If `Bash(python *)` is allowed, then `python3.13 script.py` is auto-approved.
+Two layers of command normalization:
+
+**Single-word aliases:** When Claude runs a versioned binary like `python3.13`, the hook resolves it to its canonical name (`python`) and checks if that canonical name is in your permission allow list. If `Bash(python *)` is allowed, then `python3.13 script.py` is auto-approved.
+
+**Multi-word equivalences:** When Claude runs a command like `npx jest --coverage`, the hook checks `commandEquivalences` in `permission-config.json`. If `npx jest` maps to `npm test` and `Bash(npm test *)` is in your allow list, the command is auto-approved. Matching is token-exact — `npx jest` will NOT match `npx jester`.
 
 Compound commands (pipes, `&&`, `;`, etc.) are skipped — they go through normal permission flow.
 
@@ -42,6 +46,7 @@ Edit `hooks/permission-config.json` to customize:
 
 - **`webfetch.extraDomains`** — additional domains to auto-approve (supports `*.` wildcards)
 - **`bashAliases`** — maps versioned/aliased binaries to their canonical names
+- **`commandEquivalences`** — maps canonical commands to lists of equivalent multi-word commands (e.g., `"npm test": ["npx jest", "yarn test"]`)
 
 ## Requirements
 

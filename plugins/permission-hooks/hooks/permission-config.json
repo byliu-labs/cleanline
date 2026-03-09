@@ -18,5 +18,9 @@
     "python3.12": "python",
     "python3.13": "python",
     "python3.14": "python"
+  },
+  "commandEquivalences": {
+    "npm test": ["npx jest", "yarn test", "pnpm test"],
+    "pip install": ["pip3 install"]
   }
 }
