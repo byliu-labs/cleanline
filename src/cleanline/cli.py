@@ -117,8 +117,18 @@ def cmd_status(args: argparse.Namespace) -> int:
     summary = result.get("audit_summary", {})
     if not summary:
         print("  (no audit data)")
-    for decision, count in summary.items():
-        print(f"  {decision}: {count}")
+    else:
+        total_allow = summary.get("allow", 0)
+        total_passthrough = summary.get("passthrough", 0)
+        total = total_allow + total_passthrough
+        if total > 0:
+            pct = 100 * total_allow // total
+            print(f"  {total_allow} prompts saved out of {total} tool calls ({pct}% auto-approved)")
+            if total_passthrough > 0:
+                print(f"  {total_passthrough} still prompted -- run 'cleanline suggest' to reduce")
+        else:
+            for decision, count in summary.items():
+                print(f"  {decision}: {count}")
 
     top_allow = result.get("top_auto_approved", [])
     if top_allow:
@@ -154,39 +164,50 @@ def cmd_suggest(args: argparse.Namespace) -> int:
 
     suggestions = suggest_mod.generate_suggestions(events)
 
-    print("\nSuggested Config Changes")
-    print("========================")
+    # Headline stats
+    summary = audit_mod.summarize_decisions(events)
+    total_allow = summary.get("allow", 0)
+    total_passthrough = summary.get("passthrough", 0)
+    total = total_allow + total_passthrough
+    if total > 0:
+        print(f"\n{total_allow} prompts saved out of {total} tool calls "
+              f"({100 * total_allow // total}% auto-approved)")
 
     cmd_groups = suggestions.get("command_groups", [])
-    if cmd_groups:
-        print("\nVersion Groups (add to bashAliases):")
-        for group in cmd_groups:
-            print(f"  {group['canonical']}:")
-            for variant, count in group["variants"]:
-                print(f"    {variant}: {count} passthroughs")
-
     domain_groups = suggestions.get("domain_groups", [])
+    saveable = sum(g["total"] for g in cmd_groups) + sum(g["total"] for g in domain_groups)
+
+    if cmd_groups:
+        print(f"\nCommand aliases to add:")
+        for group in cmd_groups:
+            print(f"  {group['canonical']}:  ({group['total']} prompts saved)")
+            for variant, count in group["variants"]:
+                print(f"    {variant} -> {group['canonical']}  ({count}x)")
+
     if domain_groups:
-        print("\nDomain Groups (add to webfetch.extraDomains):")
+        print(f"\nDomain patterns to add:")
         for group in domain_groups:
-            print(f"  {group['pattern']}:")
+            print(f"  {group['pattern']}:  ({group['total']} prompts saved)")
             for sub, count in group["subdomains"]:
-                print(f"    {sub}: {count} passthroughs")
+                print(f"    {sub}  ({count}x)")
 
     top_cmds = suggestions.get("top_commands", [])
     if top_cmds and not cmd_groups:
-        print("\nTop Passthrough Commands:")
+        print("\nTop passthrough commands:")
         for cmd, count in top_cmds:
             print(f"  {cmd}: {count}")
 
     top_doms = suggestions.get("top_domains", [])
     if top_doms and not domain_groups:
-        print("\nTop Passthrough Domains:")
+        print("\nTop passthrough domains:")
         for dom, count in top_doms:
             print(f"  {dom}: {count}")
 
-    if not any([cmd_groups, domain_groups, top_cmds, top_doms]):
-        print("  No suggestions -- all passthroughs are low frequency.")
+    if saveable > 0:
+        print(f"\nApplying these suggestions would save {saveable} prompts.")
+        print("Run 'cleanline suggest --apply' to apply.")
+    elif not any([cmd_groups, domain_groups, top_cmds, top_doms]):
+        print("\n  No suggestions -- all passthroughs are low frequency.")
 
     # --apply: apply suggestions interactively
     if args.apply and any([cmd_groups, domain_groups]):

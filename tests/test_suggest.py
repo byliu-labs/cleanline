@@ -96,10 +96,48 @@ def test_generate_suggestions_full() -> None:
     assert len(result["domain_groups"]) >= 1
 
 
+def test_generate_suggestions_totals() -> None:
+    """Each suggestion group should carry the total passthrough count."""
+    events = (
+        _make_events("Bash", ["python3.12 x"] * 5 + ["python3.13 y"] * 3)
+        + _make_events("WebFetch", ["docs.foo.com"] * 4 + ["api.foo.com"] * 2)
+    )
+    result = generate_suggestions(events)
+    cmd_saved = sum(g["total"] for g in result["command_groups"])
+    dom_saved = sum(g["total"] for g in result["domain_groups"])
+    assert cmd_saved == 8  # 5 + 3
+    assert dom_saved == 6  # 4 + 2
+
+
 def test_generate_suggestions_empty() -> None:
     result = generate_suggestions([])
     assert result["command_groups"] == []
     assert result["domain_groups"] == []
+
+
+# ============================================================================
+# CLI OUTPUT: PROMPTS SAVED
+# ============================================================================
+
+
+def test_cmd_suggest_shows_prompts_saved(capsys: object) -> None:
+    """cmd_suggest should show 'prompts saved' in its output."""
+    from unittest.mock import patch
+    import argparse
+    from cleanline.cli import cmd_suggest
+
+    events = (
+        _make_events("Bash", ["python3.12 x"] * 5 + ["python3.13 y"] * 3)
+        + [{"tool": "Bash", "input": "git status", "decision": "allow", "matched_rule": "direct"}] * 10
+    )
+
+    args = argparse.Namespace(apply=False)
+    with patch("cleanline.cli.audit_mod.read_audit_log", return_value=events):
+        cmd_suggest(args)
+
+    captured = capsys.readouterr()  # type: ignore[attr-defined]
+    assert "prompts saved" in captured.out.lower()
+    assert "auto-approved" in captured.out.lower()
 
 
 # ============================================================================
