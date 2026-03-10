@@ -57,6 +57,18 @@ def test_build_usage_map_mappings() -> None:
     assert "mapping:npm test" in usage
 
 
+def test_build_usage_map_read_paths() -> None:
+    events = [_event("read:~/.claude/**", _ts(3))]
+    usage = build_usage_map(events)
+    assert "read:~/.claude/**" in usage
+
+
+def test_build_usage_map_write_paths() -> None:
+    events = [_event("write:/tmp/**", _ts(1))]
+    usage = build_usage_map(events)
+    assert "write:/tmp/**" in usage
+
+
 def test_build_usage_map_ignores_passthroughs() -> None:
     events = [_event("no_match", _ts(0), decision="passthrough")]
     usage = build_usage_map(events)
@@ -115,6 +127,52 @@ def test_find_stale_rules_user_mappings() -> None:
 # ============================================================================
 # FIND_STALE_RULES — PROFILE RULES
 # ============================================================================
+
+
+# ============================================================================
+# FIND_STALE_RULES — FILE PATHS
+# ============================================================================
+
+
+def test_find_stale_rules_user_read_paths() -> None:
+    """Read paths not in usage map should be stale."""
+    events = [_event("read:~/.claude/**", _ts(5))]
+    config = {"fileAccess": {"readPaths": ["~/.claude/**", "~/.config/**"]}}
+    lockfile_data = {"profiles": [], "merged": {}}
+
+    result = find_stale_rules(events, config, lockfile_data, min_age_days=30)
+    stale_patterns = [fp["pattern"] for fp in result["user_stale"]["file_paths"]]
+    assert "~/.config/**" in stale_patterns
+    assert "~/.claude/**" not in stale_patterns
+
+
+def test_find_stale_rules_user_write_paths() -> None:
+    """Write paths not in usage map should be stale."""
+    events = [_event("write:/tmp/**", _ts(5))]
+    config = {"fileAccess": {"writePaths": ["/tmp/**", "/var/log/**"]}}
+    lockfile_data = {"profiles": [], "merged": {}}
+
+    result = find_stale_rules(events, config, lockfile_data, min_age_days=30)
+    stale = result["user_stale"]["file_paths"]
+    stale_patterns = [fp["pattern"] for fp in stale]
+    assert "/var/log/**" in stale_patterns
+    assert "/tmp/**" not in stale_patterns
+    # Check access type is preserved
+    stale_var = [fp for fp in stale if fp["pattern"] == "/var/log/**"][0]
+    assert stale_var["access"] == "write"
+
+
+def test_find_stale_rules_file_paths_active_count() -> None:
+    """Active file paths should be counted."""
+    events = [
+        _event("read:~/.claude/**", _ts(5)),
+        _event("write:/tmp/**", _ts(3)),
+    ]
+    config = {"fileAccess": {"readPaths": ["~/.claude/**"], "writePaths": ["/tmp/**"]}}
+    lockfile_data = {"profiles": [], "merged": {}}
+
+    result = find_stale_rules(events, config, lockfile_data, min_age_days=30)
+    assert result["active_counts"]["file_paths"] == 2
 
 
 def test_find_stale_rules_profile_rules() -> None:
@@ -311,6 +369,45 @@ def test_apply_tighten_user_removes_domains(tmp_path: Path) -> None:
     data = lockfile_mod.read_lockfile(lockfile_path)
     assert "*.cppreference.com" not in data["user_config"]["webfetch"]["extraDomains"]
     assert "*.docs.rs" in data["user_config"]["webfetch"]["extraDomains"]
+
+
+def test_apply_tighten_user_removes_file_paths(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
+    config_path = tmp_path / "permission-config.json"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {
+            "fileAccess": {
+                "readPaths": ["~/.claude/**", "~/.config/**"],
+                "writePaths": ["/tmp/**", "/var/log/**"],
+            },
+        },
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    removals = {
+        "user_stale": {
+            "aliases": [],
+            "mappings": [],
+            "domains": [],
+            "file_paths": [
+                {"pattern": "~/.config/**", "access": "read"},
+                {"pattern": "/var/log/**", "access": "write"},
+            ],
+        }
+    }
+    with patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path):
+        result = apply_tighten_user(removals, config_path)
+    assert any("2 file paths" in a for a in result["actions"])
+
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "~/.config/**" not in data["user_config"]["fileAccess"]["readPaths"]
+    assert "~/.claude/**" in data["user_config"]["fileAccess"]["readPaths"]
+    assert "/var/log/**" not in data["user_config"]["fileAccess"]["writePaths"]
+    assert "/tmp/**" in data["user_config"]["fileAccess"]["writePaths"]
 
 
 def test_apply_tighten_user_removes_mappings(tmp_path: Path) -> None:

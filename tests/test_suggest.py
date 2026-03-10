@@ -6,6 +6,7 @@ from unittest.mock import patch
 from cleanline.suggest import (
     apply_suggestions,
     find_domain_groups,
+    find_path_groups,
     find_version_groups,
     generate_suggestions,
     group_passthroughs,
@@ -284,6 +285,108 @@ def test_apply_suggestions_cancelled(tmp_path: Path) -> None:
         result = apply_suggestions(suggestions, config_path)
 
     assert result["cancelled"]
+
+
+# ============================================================================
+# FILE PATH GROUPING
+# ============================================================================
+
+
+def test_group_passthroughs_file_paths() -> None:
+    events = _make_events("Read", ["/home/user/src/a.py", "/home/user/src/b.py", "/tmp/foo.txt"])
+    result = group_passthroughs(events)
+    paths = dict(result["file_paths"])
+    assert paths.get("/home/user/src/a.py") == 1
+    assert paths.get("/home/user/src/b.py") == 1
+    assert paths.get("/tmp/foo.txt") == 1
+
+
+def test_group_passthroughs_file_tools() -> None:
+    """All file tools (Read, Edit, Write, Glob, Grep) should count."""
+    events = (
+        _make_events("Read", ["/src/a.py"])
+        + _make_events("Edit", ["/src/b.py"])
+        + _make_events("Write", ["/src/c.py"])
+        + _make_events("Glob", ["/src"])
+        + _make_events("Grep", ["/src"])
+    )
+    result = group_passthroughs(events)
+    paths = dict(result["file_paths"])
+    assert len(paths) == 4  # /src/a.py, /src/b.py, /src/c.py, /src
+
+
+def test_find_path_groups() -> None:
+    file_paths = [("/home/user/src/a.py", 5), ("/home/user/src/b.py", 3), ("/tmp/foo.txt", 1)]
+    groups = find_path_groups(file_paths)
+    assert len(groups) == 1
+    assert groups[0]["pattern"] == "/home/user/src/**"
+    assert groups[0]["total"] == 8
+
+
+def test_find_path_groups_no_group() -> None:
+    file_paths = [("/a/file.py", 5), ("/b/file.py", 3)]
+    groups = find_path_groups(file_paths)
+    # Each dir has only 1 file, so no groups (need 2+ per dir)
+    assert groups == []
+
+
+def test_find_path_groups_below_min_count() -> None:
+    file_paths = [("/home/user/src/a.py", 1), ("/home/user/src/b.py", 1)]
+    groups = find_path_groups(file_paths)
+    assert len(groups) == 0  # total=2, below default min_count=3
+
+
+def test_find_path_groups_confidence() -> None:
+    file_paths = [("/src/a.py", 8), ("/src/b.py", 7)]
+    groups = find_path_groups(file_paths)
+    assert len(groups) == 1
+    assert groups[0]["confidence"] == "high"
+
+
+def test_generate_suggestions_includes_file_paths() -> None:
+    events = _make_events("Read", ["/home/user/src/a.py"] * 5 + ["/home/user/src/b.py"] * 3)
+    result = generate_suggestions(events)
+    assert len(result["file_path_groups"]) >= 1
+    assert result["file_path_groups"][0]["pattern"] == "/home/user/src/**"
+
+
+def test_generate_suggestions_top_file_paths() -> None:
+    events = _make_events("Read", ["/unique/path.py"] * 2)
+    result = generate_suggestions(events)
+    assert len(result["top_file_paths"]) >= 1
+
+
+def test_apply_suggestions_adds_read_paths(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
+    config_path = tmp_path / "permission-config.json"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"fileAccess": {"readPaths": [], "writePaths": []}},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    suggestions = {
+        "command_groups": [],
+        "domain_groups": [],
+        "file_path_groups": [
+            {"pattern": "/home/user/src/**", "paths": [("/home/user/src/a.py", 5)], "total": 5}
+        ],
+    }
+
+    with (
+        patch("builtins.input", return_value="y"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
+        result = apply_suggestions(suggestions, config_path)
+
+    assert not result["cancelled"]
+    assert any("read paths" in a for a in result["actions"])
+
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "/home/user/src/**" in data["user_config"]["fileAccess"]["readPaths"]
 
 
 def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:

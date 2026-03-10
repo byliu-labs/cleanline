@@ -299,6 +299,92 @@ def test_write_permission_config_user_aliases_take_priority(tmp_path: Path) -> N
     assert config["bashAliases"]["python3"] == "python"
 
 
+def test_write_permission_config_merges_file_access(tmp_path: Path) -> None:
+    """permission-config.json should include fileAccess from user_config and merged."""
+    config_path = tmp_path / "permission-config.json"
+
+    lockfile_data = {
+        "profiles": [],
+        "merged": {
+            "fileAccess": {
+                "readPaths": ["~/profiles/**"],
+            },
+        },
+        "user_config": {
+            "fileAccess": {
+                "readPaths": ["~/.claude/**"],
+                "writePaths": ["/tmp/**"],
+                "denyPaths": ["~/.ssh/**"],
+            },
+        },
+    }
+
+    write_permission_config(config_path, lockfile_data)
+
+    config = json.loads(config_path.read_text())
+    fa = config["fileAccess"]
+    # User readPaths merged with profile readPaths
+    assert "~/.claude/**" in fa["readPaths"]
+    assert "~/profiles/**" in fa["readPaths"]
+    # User writePaths present (profile writePaths NOT auto-merged)
+    assert "/tmp/**" in fa["writePaths"]
+    # User denyPaths present
+    assert "~/.ssh/**" in fa["denyPaths"]
+
+
+def test_write_permission_config_profile_write_not_merged(tmp_path: Path) -> None:
+    """Profile writePaths should NOT be auto-merged into permission-config.json."""
+    config_path = tmp_path / "permission-config.json"
+
+    lockfile_data = {
+        "profiles": [],
+        "merged": {
+            "fileAccess": {
+                "pendingWritePaths": ["/opt/cache/**"],
+            },
+        },
+        "user_config": {
+            "fileAccess": {
+                "writePaths": ["/tmp/**"],
+            },
+        },
+    }
+
+    write_permission_config(config_path, lockfile_data)
+
+    config = json.loads(config_path.read_text())
+    fa = config.get("fileAccess", {})
+    write_paths = fa.get("writePaths", [])
+    assert "/tmp/**" in write_paths
+    # Profile pending write paths should NOT be in writePaths
+    assert "/opt/cache/**" not in write_paths
+
+
+def test_merge_profiles_file_access_read_union(
+    sample_profile: dict, sample_profile_b: dict
+) -> None:
+    """File access readPaths should be unioned across profiles."""
+    sample_profile["fileAccess"] = {"readPaths": ["~/a/**"]}
+    sample_profile_b["fileAccess"] = {"readPaths": ["~/b/**", "~/a/**"]}
+    merged = merge_profiles([sample_profile, sample_profile_b])
+    fa = merged.get("fileAccess", {})
+    assert "~/a/**" in fa.get("readPaths", [])
+    assert "~/b/**" in fa.get("readPaths", [])
+    # No duplicates
+    assert fa["readPaths"].count("~/a/**") == 1
+
+
+def test_merge_profiles_write_paths_go_to_pending(
+    sample_profile: dict,
+) -> None:
+    """Profile writePaths should go to pendingWritePaths in merged."""
+    sample_profile["fileAccess"] = {"writePaths": ["/opt/cache/**"]}
+    merged = merge_profiles([sample_profile])
+    fa = merged.get("fileAccess", {})
+    assert "/opt/cache/**" in fa.get("pendingWritePaths", [])
+    assert "writePaths" not in fa
+
+
 def test_write_permission_config_no_settings(tmp_path: Path) -> None:
     """Without settings.json, resolvedCanonicals should be empty."""
     config_path = tmp_path / "permission-config.json"

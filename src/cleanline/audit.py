@@ -41,6 +41,12 @@ def parse_rule(matched_rule: str) -> dict:
         return {"type": "mapping", "canonical": matched_rule[len("mapping:"):]}
     if matched_rule.startswith("domain:"):
         return {"type": "domain", "pattern": matched_rule[len("domain:"):]}
+    if matched_rule.startswith("read:"):
+        return {"type": "read", "pattern": matched_rule[len("read:"):]}
+    if matched_rule.startswith("write:"):
+        return {"type": "write", "pattern": matched_rule[len("write:"):]}
+    if matched_rule.startswith("deny:"):
+        return {"type": "deny", "pattern": matched_rule[len("deny:"):]}
     return {"type": "unknown", "raw": matched_rule}
 
 

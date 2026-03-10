@@ -18,6 +18,15 @@
             "command": "${CLAUDE_PLUGIN_ROOT}/scripts/bash-gate.sh"
           }
         ]
+      },
+      {
+        "matcher": "Read|Edit|Write|Glob|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/approve-fileops.sh"
+          }
+        ]
       }
     ]
   }

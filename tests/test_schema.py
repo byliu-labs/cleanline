@@ -1,5 +1,5 @@
 """Tests for profile schema validation."""
-from cleanline.schema import MAX_ALIASES, MAX_DOMAINS, MAX_MAPPINGS, validate_profile
+from cleanline.schema import MAX_ALIASES, MAX_DOMAINS, MAX_FILE_PATHS, MAX_MAPPINGS, validate_profile
 
 
 def test_valid_profile_passes(sample_profile: dict) -> None:
@@ -89,3 +89,48 @@ def test_minimal_valid_profile() -> None:
     errors, warnings = validate_profile(profile)
     assert errors == []
     assert warnings == []
+
+
+def test_file_access_valid() -> None:
+    profile = {
+        "name": "test",
+        "version": "1.0",
+        "fileAccess": {
+            "readPaths": ["~/.claude/**"],
+            "writePaths": ["/tmp/**"],
+        },
+    }
+    errors, warnings = validate_profile(profile)
+    assert errors == []
+
+
+def test_file_access_over_cap() -> None:
+    profile = {
+        "name": "test",
+        "version": "1.0",
+        "fileAccess": {
+            "readPaths": [f"~/path{i}/**" for i in range(MAX_FILE_PATHS + 1)],
+        },
+    }
+    errors, _ = validate_profile(profile)
+    assert any("fileAccess.readPaths" in e and "max" in e for e in errors)
+
+
+def test_file_access_warning_at_half_cap() -> None:
+    count = int(MAX_FILE_PATHS * 0.5) + 1
+    profile = {
+        "name": "test",
+        "version": "1.0",
+        "fileAccess": {
+            "readPaths": [f"~/path{i}/**" for i in range(count)],
+        },
+    }
+    errors, warnings = validate_profile(profile)
+    assert errors == []
+    assert any("fileAccess.readPaths" in w for w in warnings)
+
+
+def test_file_access_invalid_type() -> None:
+    profile = {"name": "test", "version": "1.0", "fileAccess": "not-a-dict"}
+    errors, _ = validate_profile(profile)
+    assert any("fileAccess" in e and "object" in e for e in errors)

@@ -22,8 +22,17 @@ def _load_known_domains() -> list[str]:
     return json.loads(data_file.read_text())
 
 
+def _load_known_file_paths() -> dict:
+    """Load the default file access paths."""
+    data_file = pkg_files("cleanline").joinpath("known_file_paths.json")
+    return json.loads(data_file.read_text())
+
+
 # Pattern to extract canonical from allow list entries like "Bash(python *)"
 BASH_ALLOW_PATTERN = re.compile(r"^Bash\((\S+?)(?:\s+\*)?\)$")
+
+# Pattern to extract file paths from allow list entries like "Read(src/**)"
+FILE_ALLOW_PATTERN = re.compile(r"^(Read|Edit|Write|Glob|Grep)\((.+)\)$")
 
 
 def load_known_aliases() -> dict[str, list[str]]:
@@ -59,6 +68,27 @@ def extract_canonicals(allow_list: list[str]) -> set[str]:
     return canonicals
 
 
+def extract_file_paths(allow_list: list[str]) -> dict[str, set[str]]:
+    """Extract file paths from allow list entries like Read(src/**), Edit(*.py).
+
+    Returns {"readPaths": set(...), "writePaths": set(...)}.
+    Read/Glob/Grep -> readPaths, Edit/Write -> writePaths.
+    """
+    read_paths: set[str] = set()
+    write_paths: set[str] = set()
+
+    for entry in allow_list:
+        m = FILE_ALLOW_PATTERN.match(entry)
+        if m:
+            tool, path = m.group(1), m.group(2)
+            if tool in ("Read", "Glob", "Grep"):
+                read_paths.add(path)
+            elif tool in ("Edit", "Write"):
+                write_paths.add(path)
+
+    return {"readPaths": read_paths, "writePaths": write_paths}
+
+
 def generate_aliases(canonicals: set[str], known_aliases: dict[str, list[str]]) -> dict[str, str]:
     """Generate bashAliases by cross-referencing canonicals against known variants."""
     aliases: dict[str, str] = {}
@@ -69,11 +99,15 @@ def generate_aliases(canonicals: set[str], known_aliases: dict[str, list[str]]) 
     return aliases
 
 
-def generate_config(canonicals: set[str]) -> dict:
-    """Generate a permission-config.json with aliases, domains, and resolvedCanonicals."""
+def generate_config(
+    canonicals: set[str],
+    file_paths: dict[str, set[str]] | None = None,
+) -> dict:
+    """Generate a permission-config.json with aliases, domains, fileAccess, and resolvedCanonicals."""
     known = load_known_aliases()
     aliases = generate_aliases(canonicals, known)
     domains = _load_known_domains()
+    known_fp = _load_known_file_paths()
 
     config: dict = {
         "webfetch": {"extraDomains": domains},
@@ -81,6 +115,20 @@ def generate_config(canonicals: set[str]) -> dict:
     if aliases:
         config["bashAliases"] = aliases
     config["commandMappings"] = {}
+
+    # Build fileAccess from known defaults + scanned paths
+    read_paths = set(known_fp.get("readPaths", []))
+    write_paths = set(known_fp.get("writePaths", []))
+    if file_paths:
+        read_paths.update(file_paths.get("readPaths", set()))
+        write_paths.update(file_paths.get("writePaths", set()))
+
+    config["fileAccess"] = {
+        "readPaths": sorted(read_paths),
+        "writePaths": sorted(write_paths),
+        "denyPaths": ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**"],
+    }
+
     config["resolvedCanonicals"] = sorted(canonicals)
 
     return config
@@ -188,6 +236,13 @@ def print_setup_summary(
         print("\nGenerating domain rules...")
         print(f"  {len(domains)} documentation domains")
 
+    file_access = config.get("fileAccess", {})
+    read_count = len(file_access.get("readPaths", []))
+    write_count = len(file_access.get("writePaths", []))
+    if read_count or write_count:
+        print("\nGenerating file access rules...")
+        print(f"  {read_count} read paths, {write_count} write paths")
+
     print(f"\n  Config will be written to ~/.claude/hooks/permission-config.json")
 
 
@@ -241,17 +296,19 @@ def run_setup(
 
     # Step 1: Find and parse settings
     settings_path = find_settings_path()
+    file_paths: dict[str, set[str]] | None = None
     if settings_path:
         allow_list = parse_allow_list(settings_path)
         canonicals = extract_canonicals(allow_list)
+        file_paths = extract_file_paths(allow_list)
         result["canonicals_found"] = sorted(canonicals)
     else:
         canonicals = set()
         if not dry_run:
             result["warnings"].append("~/.claude/settings.json not found")
 
-    # Step 2: Generate config (now includes resolvedCanonicals)
-    config = generate_config(canonicals)
+    # Step 2: Generate config (now includes resolvedCanonicals + fileAccess)
+    config = generate_config(canonicals, file_paths=file_paths)
     result["config"] = config
 
     # Step 3: Interactive summary
@@ -273,6 +330,7 @@ def run_setup(
             "bashAliases": config.get("bashAliases", {}),
             "commandMappings": config.get("commandMappings", {}),
             "webfetch": config.get("webfetch", {}),
+            "fileAccess": config.get("fileAccess", {}),
         }
         lockfile_mod.write_lockfile(lockfile_data)
         result["actions"].append("saved user_config to lockfile")

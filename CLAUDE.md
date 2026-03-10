@@ -13,9 +13,9 @@ Plugin (bash dispatcher + Python)      CLI (Python package)
   scripts/resolve.py (single entry)      src/cleanline/setup_cmd.py
   scripts/approve-webfetch-domains.sh    src/cleanline/profile_ops.py
   scripts/resolve_webfetch.py            src/cleanline/lockfile.py
-  scripts/default-config.json            src/cleanline/schema.py
-                                         src/cleanline/suggest.py
-                                         src/cleanline/tighten.py
+  scripts/approve-fileops.sh             src/cleanline/schema.py
+  scripts/resolve_fileops.py             src/cleanline/suggest.py
+  scripts/default-config.json            src/cleanline/tighten.py
                                          src/cleanline/audit.py
         |                                        |
         | reads (ONE file)                       | reads/writes
@@ -38,6 +38,10 @@ Hooks read **only** `permission-config.json` (not the lockfile). CLI generates `
 - **Zero external deps**: CLI uses only Python stdlib. No pip dependencies.
 - **Atomic writes**: All config/lock file writes use temp-file-then-rename pattern.
 - **Data-driven config**: Default domains (`known_domains.json`) and alias mappings (`known_aliases.json`) are data files, not hardcoded.
+- **Hardcoded deny list**: File access hook has 13 deny patterns (ssh, gnupg, aws, .env, etc.) in a Python constant that cannot be overridden by config.
+- **Symlink resolution**: File paths are resolved via `Path.resolve()` before deny matching, preventing symlink-based bypass.
+- **Read/write separation**: Read operations (Read, Glob, Grep) check `readPaths`; write operations (Edit, Write) check `writePaths`. Reading a path does not grant write access.
+- **Profile writePaths opt-in**: Profile `readPaths` merge automatically; `writePaths` require explicit user acceptance (stored in `pendingWritePaths` until accepted).
 
 ## Data Flow
 
@@ -72,6 +76,31 @@ WebFetch call
   → Append to hook.jsonl
 ```
 
+### File Ops Hook Pipeline (resolve_fileops.py)
+
+```
+Read/Edit/Write/Glob/Grep call
+  → approve-fileops.sh reads stdin, forwards to resolve_fileops.py
+  → Extract path: file_path (Read/Edit/Write) or path (Glob/Grep, default: cwd)
+  → Normalize: expand ~, resolve symlinks via Path.resolve(), make absolute
+  → DENY check: hardcoded deny list first (ssh, gnupg, aws, .env, etc.)
+  → DENY check: config denyPaths second
+  → ALLOW check: readPaths (Read/Glob/Grep) or writePaths (Edit/Write)
+  → Output {"decision":"allow"} or exit silently
+  → Append to hook.jsonl with read:/write:/deny: prefixed rules
+```
+
+Hardcoded deny (not config-overridable):
+`~/.ssh/**`, `~/.gnupg/**`, `~/.aws/**`, `~/.netrc`, `~/.claude/credentials*`,
+`~/.password-store/**`, `~/.local/share/keyrings/**`, `~/.kube/**`, `~/.docker/**`,
+`**/.env`, `**/.env.*`, `**/.git/config`
+
+Pattern matching:
+- `~/.claude/**` → recursive match with symlink-resolved prefix
+- `**/.env` → filename-component match at any depth
+- `**/.git/config` → multi-component suffix match
+- Exact paths resolved through symlinks before comparison
+
 ### Config Generation (CLI → Hooks)
 
 ```
@@ -80,7 +109,7 @@ user_config (lockfile)          profile rules (lockfile merged)
         → lockfile.write_permission_config() →
                   permission-config.json
                   (bashAliases + commandMappings + webfetch.extraDomains
-                   + resolvedCanonicals)
+                   + fileAccess + resolvedCanonicals)
 ```
 
 User aliases take priority over profile aliases on key conflict.
@@ -95,14 +124,15 @@ User aliases take priority over profile aliases on key conflict.
 | `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate permission-config.json with resolvedCanonicals, save user_config to lockfile |
 | `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run. Regenerates permission-config.json after mutations |
 | `lockfile.py` | Lock file read/write, profile merging, user_config storage, `write_permission_config()` for generating the merged output |
-| `schema.py` | Profile validation with hard caps (50 aliases, 30 mappings, 50 domains) |
+| `schema.py` | Profile validation with hard caps (50 aliases, 30 mappings, 50 domains, 50 file paths) |
 | `fetch.py` | Profile fetching from `github:user/repo` or `local:path` sources |
 | `conflicts.py` | Conflict detection: alias conflicts (same key, different canonical), mapping conflicts |
-| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, confidence labels, apply to lockfile user_config |
-| `tighten.py` | Audit-based decay analysis: stale rule detection, family context, remove from lockfile user_config or suppress via overrides |
-| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, log rotation |
+| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, file path grouping, confidence labels, apply to lockfile user_config |
+| `tighten.py` | Audit-based decay analysis: stale rule detection (aliases, mappings, domains, file paths), family context, remove from lockfile user_config or suppress via overrides |
+| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, log rotation. Parses `read:`, `write:`, `deny:` rule prefixes |
 | `known_aliases.json` | Curated alias table: python → [python3, python3.10-3.14], cargo → [cargo-clippy, cargo-fmt, cargo-watch], etc. |
 | `known_domains.json` | Default documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
+| `known_file_paths.json` | Default file access paths: readPaths (~/.claude/**, ~/.config/**), writePaths (/tmp/**) |
 
 ### Plugin Scripts (plugins/clean-line/scripts/)
 
@@ -112,23 +142,25 @@ User aliases take priority over profile aliases on key conflict.
 | `resolve.py` | Single Python entry point for Bash hooks. All resolution logic in one process |
 | `approve-webfetch-domains.sh` | Thin dispatcher: reads stdin, forwards to resolve_webfetch.py |
 | `resolve_webfetch.py` | Single Python entry point for WebFetch hooks |
-| `default-config.json` | Static defaults (common aliases, domains). Copied on first run |
+| `approve-fileops.sh` | Thin dispatcher: reads stdin, forwards to resolve_fileops.py |
+| `resolve_fileops.py` | Single Python entry point for file ops hooks (Read/Edit/Write/Glob/Grep). Hardcoded deny list + configurable allow paths |
+| `default-config.json` | Static defaults (common aliases, domains, file paths). Copied on first run |
 
 ### Config Files
 
 | File | Location | Written by | Read by |
 |------|----------|-----------|---------|
-| `permission-config.json` | `~/.claude/hooks/` | CLI (`setup`, `write_permission_config`) | Both hooks |
+| `permission-config.json` | `~/.claude/hooks/` | CLI (`setup`, `write_permission_config`) | All three hooks |
 | `profiles.lock.json` | `~/.claude/hooks/` | CLI (all mutation commands) | CLI only |
-| `hook.jsonl` | `~/.claude/hooks/` | resolve.py / resolve_webfetch.py | CLI (`status/suggest/tighten`) |
+| `hook.jsonl` | `~/.claude/hooks/` | resolve.py / resolve_webfetch.py / resolve_fileops.py | CLI (`status/suggest/tighten`) |
 
 ## Setup Flow
 
 `setup` generates the permission-config.json. Plugin installation is separate (`/plugin install`).
 
 1. **Prerequisites** — Check python3 >= 3.10
-2. **Scan allow list** — Parse `Bash(python *)` entries from `~/.claude/settings.json`
-3. **Generate config** — Cross-reference canonicals against known_aliases.json, include resolvedCanonicals
+2. **Scan allow list** — Parse `Bash(python *)` and `Read(path)`/`Edit(path)` entries from `~/.claude/settings.json`
+3. **Generate config** — Cross-reference canonicals against known_aliases.json, extract file paths, include resolvedCanonicals + fileAccess
 4. **Interactive summary** — Show what will happen, prompt `[Y/n]`
 5. **Write config** — permission-config.json to `~/.claude/hooks/`
 6. **Save user_config** — Write to lockfile for future mutations by suggest/tighten
@@ -157,6 +189,8 @@ Merge rules:
 - **Domains**: Set union, deduplicated
 - **Aliases**: Dict merge. User aliases override profile aliases on conflict
 - **Mappings**: Per-canonical alias list union
+- **File access readPaths**: Set union across profiles + user_config
+- **File access writePaths**: User-only (profile writePaths require explicit opt-in, stored in `pendingWritePaths`)
 - **resolvedCanonicals**: Computed from settings.json at config generation time
 
 ### User Overrides
@@ -182,11 +216,12 @@ cleanline tighten --apply            # Remove/suppress stale rules
 
 ## When Making Changes
 
-### Modifying hooks (resolve.py / resolve_webfetch.py)
+### Modifying hooks (resolve.py / resolve_webfetch.py / resolve_fileops.py)
 - Test with `test_hooks_integration.py` — runs actual shell dispatchers with crafted stdin
-- Test internals with `test_resolve.py` — unit tests for all resolution functions
+- Test internals with `test_resolve.py` / `test_resolve_fileops.py` — unit tests for all resolution functions
 - Always maintain fail-closed behavior (silent exit on any error)
-- All helpers live in the same script — no subprocess calls within resolve.py
+- All helpers live in the same script — no subprocess calls within resolve scripts
+- For file ops: never bypass the hardcoded deny list; always resolve symlinks before matching
 
 ### Modifying CLI modules
 - Each module has a corresponding `tests/test_<module>.py`
@@ -216,13 +251,14 @@ cleanline tighten --apply            # Remove/suppress stale rules
 | Module | Test File | Key tests |
 |--------|-----------|-----------|
 | resolve.py | test_resolve.py | Metacharacter detection, chain splitting, binary normalization, alias/mapping/direct-canonical resolution, no-chaining invariant, audit logging, first-run config, hostname parsing, domain matching |
-| hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors |
-| setup_cmd | test_setup.py | Canonicals extraction, alias generation, config with resolvedCanonicals, full flow, user_config to lockfile |
-| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config |
-| schema | test_schema.py | Validation caps, warn thresholds, type checking |
-| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule |
+| resolve_fileops.py | test_resolve_fileops.py | Path normalization, extraction, pattern matching, .env recursive denial, symlink resolution, hardcoded deny, check_access, audit logging |
+| hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors, file ops (read/write/deny/symlink) |
+| setup_cmd | test_setup.py | Canonicals extraction, alias generation, file path extraction, config with resolvedCanonicals + fileAccess, full flow, user_config to lockfile |
+| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config, fileAccess merging |
+| schema | test_schema.py | Validation caps, warn thresholds, type checking, fileAccess validation |
+| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule (alias/mapping/domain/read/write/deny) |
 | fetch | test_fetch.py | GitHub URL parsing, local fetch, error handling |
 | conflicts | test_conflicts.py | Alias conflicts, mapping conflicts, no-conflict dedup |
-| suggest | test_suggest.py | Version grouping, domain grouping, confidence labels, sorting, min_count, apply to lockfile user_config |
-| tighten | test_tighten.py | Usage map, stale detection, family context, apply user/profile via lockfile, CLI gate (--force) |
+| suggest | test_suggest.py | Version grouping, domain grouping, file path grouping, confidence labels, sorting, min_count, apply to lockfile user_config (aliases + domains + read paths) |
+| tighten | test_tighten.py | Usage map (aliases/mappings/domains/read/write paths), stale detection, family context, apply user/profile via lockfile, file path removal, CLI gate (--force) |
 | profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, override reconciliation |

@@ -36,5 +36,10 @@
       "*.cppreference.com"
     ]
   },
+  "fileAccess": {
+    "readPaths": ["~/.claude/**", "~/.config/**"],
+    "writePaths": ["/tmp/**"],
+    "denyPaths": ["~/.ssh/**", "~/.gnupg/**", "~/.aws/**"]
+  },
   "resolvedCanonicals": []
 }

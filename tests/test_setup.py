@@ -7,6 +7,7 @@ from cleanline.setup_cmd import (
     analyze_compatibility,
     check_prerequisites,
     extract_canonicals,
+    extract_file_paths,
     generate_aliases,
     generate_config,
     load_known_aliases,
@@ -58,6 +59,49 @@ def test_generate_config() -> None:
     assert "webfetch" in config
     assert "bashAliases" in config
     assert "commandMappings" in config
+
+
+def test_extract_file_paths() -> None:
+    allow_list = [
+        "Read(src/**)",
+        "Edit(*.py)",
+        "Write(/tmp/**)",
+        "Glob(~/.config/**)",
+        "Grep(tests/)",
+        "Bash(python *)",
+    ]
+    paths = extract_file_paths(allow_list)
+    assert "src/**" in paths["readPaths"]
+    assert "~/.config/**" in paths["readPaths"]
+    assert "tests/" in paths["readPaths"]
+    assert "*.py" in paths["writePaths"]
+    assert "/tmp/**" in paths["writePaths"]
+
+
+def test_extract_file_paths_empty() -> None:
+    paths = extract_file_paths(["Bash(python *)"])
+    assert paths["readPaths"] == set()
+    assert paths["writePaths"] == set()
+
+
+def test_generate_config_includes_file_access() -> None:
+    config = generate_config({"python"})
+    assert "fileAccess" in config
+    assert "readPaths" in config["fileAccess"]
+    assert "writePaths" in config["fileAccess"]
+    assert "denyPaths" in config["fileAccess"]
+    # Known defaults should be present
+    assert "~/.claude/**" in config["fileAccess"]["readPaths"]
+    assert "/tmp/**" in config["fileAccess"]["writePaths"]
+
+
+def test_generate_config_merges_scanned_file_paths() -> None:
+    file_paths = {"readPaths": {"~/projects/**"}, "writePaths": {"/opt/out/**"}}
+    config = generate_config({"python"}, file_paths=file_paths)
+    assert "~/projects/**" in config["fileAccess"]["readPaths"]
+    assert "/opt/out/**" in config["fileAccess"]["writePaths"]
+    # Known defaults still present
+    assert "~/.claude/**" in config["fileAccess"]["readPaths"]
 
 
 def test_generate_config_includes_resolved_canonicals() -> None:
@@ -180,3 +224,4 @@ def test_setup_saves_user_config_to_lockfile(tmp_path: Path) -> None:
     data = json.loads(lockfile_path.read_text())
     assert "user_config" in data
     assert "bashAliases" in data["user_config"]
+    assert "fileAccess" in data["user_config"]

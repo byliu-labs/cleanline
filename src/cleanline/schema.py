@@ -10,12 +10,13 @@ from __future__ import annotations
 MAX_ALIASES = 50
 MAX_MAPPINGS = 30
 MAX_DOMAINS = 50
+MAX_FILE_PATHS = 50
 
 # Warn when a profile uses more than this fraction of any cap
 WARN_THRESHOLD = 0.5
 
 REQUIRED_FIELDS = {"name", "version"}
-OPTIONAL_FIELDS = {"description", "author", "bashAliases", "commandMappings", "webfetch"}
+OPTIONAL_FIELDS = {"description", "author", "bashAliases", "commandMappings", "webfetch", "fileAccess"}
 
 
 def validate_profile(profile: dict) -> tuple[list[str], list[str]]:
@@ -72,5 +73,24 @@ def validate_profile(profile: dict) -> tuple[list[str], list[str]]:
                 errors.append(f"webfetch.extraDomains has {len(domains)} entries, max is {MAX_DOMAINS}")
             elif len(domains) > MAX_DOMAINS * WARN_THRESHOLD:
                 warnings.append(f"webfetch.extraDomains has {len(domains)} entries ({MAX_DOMAINS} max)")
+
+    # Validate fileAccess
+    file_access = profile.get("fileAccess", {})
+    if not isinstance(file_access, dict):
+        errors.append("'fileAccess' must be an object")
+    else:
+        for subkey in ("readPaths", "writePaths", "denyPaths"):
+            paths = file_access.get(subkey, [])
+            if not isinstance(paths, list):
+                errors.append(f"'fileAccess.{subkey}' must be a list")
+            else:
+                if len(paths) > MAX_FILE_PATHS:
+                    errors.append(
+                        f"fileAccess.{subkey} has {len(paths)} entries, max is {MAX_FILE_PATHS}"
+                    )
+                elif len(paths) > MAX_FILE_PATHS * WARN_THRESHOLD:
+                    warnings.append(
+                        f"fileAccess.{subkey} has {len(paths)} entries ({MAX_FILE_PATHS} max)"
+                    )
 
     return errors, warnings

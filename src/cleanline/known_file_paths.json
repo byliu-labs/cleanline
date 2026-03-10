@@ -1,0 +1,1 @@
+{"readPaths": ["~/.claude/**", "~/.config/**"], "writePaths": ["/tmp/**"]}

@@ -130,6 +130,26 @@ def test_parse_rule_unknown() -> None:
     assert result == {"type": "unknown", "raw": "something_else"}
 
 
+# ============================================================================
+# PARSE_RULE — FILE ACCESS RULES
+# ============================================================================
+
+
+def test_parse_rule_read() -> None:
+    result = parse_rule("read:~/.claude/**")
+    assert result == {"type": "read", "pattern": "~/.claude/**"}
+
+
+def test_parse_rule_write() -> None:
+    result = parse_rule("write:/tmp/**")
+    assert result == {"type": "write", "pattern": "/tmp/**"}
+
+
+def test_parse_rule_deny() -> None:
+    result = parse_rule("deny:~/.ssh/**")
+    assert result == {"type": "deny", "pattern": "~/.ssh/**"}
+
+
 def test_read_audit_log_with_bad_lines(tmp_path: Path) -> None:
     log_path = tmp_path / "hook.jsonl"
     with open(log_path, "w") as f:

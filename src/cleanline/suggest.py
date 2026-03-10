@@ -34,15 +34,20 @@ def _build_reverse_alias_map() -> dict[str, str]:
     return reverse
 
 
+FILE_TOOLS = {"Read", "Edit", "Write", "Glob", "Grep"}
+
+
 def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
     """Group passthrough events into suggestion categories.
 
     Returns dict with keys:
       "commands": [(command, count), ...]  — top passthrough commands
       "domains": [(domain, count), ...]    — top passthrough domains
+      "file_paths": [(path, count), ...]   — top passthrough file paths
     """
     cmd_counts: Counter[str] = Counter()
     domain_counts: Counter[str] = Counter()
+    file_path_counts: Counter[str] = Counter()
 
     for event in events:
         if event.get("decision") != "passthrough":
@@ -59,10 +64,13 @@ def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
                 cmd_counts[parts[0]] += 1
         elif tool == "WebFetch":
             domain_counts[input_val] += 1
+        elif tool in FILE_TOOLS:
+            file_path_counts[input_val] += 1
 
     return {
         "commands": cmd_counts.most_common(20),
         "domains": domain_counts.most_common(20),
+        "file_paths": file_path_counts.most_common(20),
     }
 
 
@@ -160,6 +168,42 @@ def find_domain_groups(
     return result
 
 
+def find_path_groups(
+    file_paths: list[tuple[str, int]],
+    min_count: int = MIN_SUGGEST_COUNT,
+) -> list[dict]:
+    """Group file paths by common directory prefix.
+
+    E.g., /home/user/src/a.py (5), /home/user/src/b.py (3) → suggest /home/user/src/**
+
+    Groups with 2+ paths and total >= min_count are returned,
+    sorted by total descending with confidence labels.
+    """
+    import os
+
+    dir_map: dict[str, list[tuple[str, int]]] = {}
+    for path_str, count in file_paths:
+        parent = os.path.dirname(path_str)
+        if parent:
+            if parent not in dir_map:
+                dir_map[parent] = []
+            dir_map[parent].append((path_str, count))
+
+    result = []
+    for parent_dir, paths in dir_map.items():
+        total = sum(c for _, c in paths)
+        if len(paths) >= 2 and total >= min_count:
+            result.append({
+                "pattern": f"{parent_dir}/**",
+                "paths": paths,
+                "total": total,
+                "confidence": _confidence_label(total),
+            })
+
+    result.sort(key=lambda g: g["total"], reverse=True)
+    return result
+
+
 def generate_suggestions(
     events: list[dict],
     min_count: int = MIN_SUGGEST_COUNT,
@@ -179,8 +223,10 @@ def generate_suggestions(
     return {
         "command_groups": find_version_groups(grouped["commands"], min_count=min_count),
         "domain_groups": find_domain_groups(grouped["domains"], min_count=min_count),
+        "file_path_groups": find_path_groups(grouped.get("file_paths", []), min_count=min_count),
         "top_commands": grouped["commands"][:10],
         "top_domains": grouped["domains"][:10],
+        "top_file_paths": grouped.get("file_paths", [])[:10],
     }
 
 
@@ -207,7 +253,11 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
     for group in suggestions.get("domain_groups", []):
         new_domains.append(group["pattern"])
 
-    if not new_aliases and not new_domains:
+    new_read_paths: list[str] = []
+    for group in suggestions.get("file_path_groups", []):
+        new_read_paths.append(group["pattern"])
+
+    if not new_aliases and not new_domains and not new_read_paths:
         result["actions"].append("nothing to apply")
         return result
 
@@ -221,6 +271,10 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
         print(f"  + {len(new_domains)} domain patterns:")
         for domain in new_domains:
             print(f"      {domain}")
+    if new_read_paths:
+        print(f"  + {len(new_read_paths)} file read paths:")
+        for path in new_read_paths:
+            print(f"      {path}")
 
     try:
         answer = input("\nApply these changes? [Y/n] ").strip().lower()
@@ -255,6 +309,17 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
             existing_set.add(domain)
             added_domains += 1
 
+    # Merge read paths into user_config.fileAccess
+    existing_fa = user_config.setdefault("fileAccess", {})
+    existing_read = existing_fa.setdefault("readPaths", [])
+    existing_read_set = set(existing_read)
+    added_paths = 0
+    for path in new_read_paths:
+        if path not in existing_read_set:
+            existing_read.append(path)
+            existing_read_set.add(path)
+            added_paths += 1
+
     # Write lockfile + regenerate permission-config.json
     lockfile_mod.write_lockfile(lockfile_data)
     lockfile_mod.write_permission_config(config_path, lockfile_data)
@@ -263,5 +328,7 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
         result["actions"].append(f"added {added_aliases} aliases")
     if added_domains:
         result["actions"].append(f"added {added_domains} domains")
+    if added_paths:
+        result["actions"].append(f"added {added_paths} read paths")
 
     return result

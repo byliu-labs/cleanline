@@ -334,6 +334,177 @@ class TestBashGate:
         assert "allow" not in out
 
 
+class TestFileOpsHook:
+    def test_read_allowed_path(self, tmp_path: Path) -> None:
+        """Read of a path in readPaths should auto-approve."""
+        home = str(tmp_path)
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [f"{home}/.claude/**"],
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+        # Create the target file so path resolves
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "settings.json").write_text("{}")
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Read", "tool_input": {"file_path": f"{home}/.claude/settings.json"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert '"decision":"allow"' in out or '{"decision":"allow"}' in out
+
+    def test_read_denied_ssh(self, tmp_path: Path) -> None:
+        """Read of ~/.ssh/ path should be denied (hardcoded deny)."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [f"{tmp_path}/.ssh/**"],  # Even if in readPaths
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+        # Create the path so it resolves
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "id_rsa").write_text("key")
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Read", "tool_input": {"file_path": f"{tmp_path}/.ssh/id_rsa"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert "allow" not in out
+
+    def test_write_allowed_tmp(self, tmp_path: Path) -> None:
+        """Write to a path in writePaths should auto-approve."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [],
+                "writePaths": ["/tmp/**"],
+                "denyPaths": [],
+            },
+        })
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/output.txt"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert '"decision":"allow"' in out or '{"decision":"allow"}' in out
+
+    def test_write_to_read_only_passthrough(self, tmp_path: Path) -> None:
+        """Write to a path only in readPaths should passthrough."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [f"{tmp_path}/.claude/**"],
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+        claude_dir = tmp_path / ".claude"
+        claude_dir.mkdir(parents=True, exist_ok=True)
+        (claude_dir / "settings.json").write_text("{}")
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Write", "tool_input": {"file_path": f"{tmp_path}/.claude/settings.json"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert "allow" not in out
+
+    def test_glob_allowed(self, tmp_path: Path) -> None:
+        """Glob in an allowed directory should auto-approve."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [f"{tmp_path}/.config/**"],
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+        config_dir = tmp_path / ".config"
+        config_dir.mkdir()
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Glob", "tool_input": {"path": f"{tmp_path}/.config", "pattern": "*.json"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert '"decision":"allow"' in out or '{"decision":"allow"}' in out
+
+    def test_no_file_access_passthrough(self, tmp_path: Path) -> None:
+        """No fileAccess in config should passthrough silently."""
+        _setup_config(tmp_path, {
+            "bashAliases": {},
+            "resolvedCanonicals": [],
+        })
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Read", "tool_input": {"file_path": "/tmp/foo"}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        assert "allow" not in out
+
+    def test_audit_log_written(self, tmp_path: Path) -> None:
+        """File ops hook should write to audit log."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": ["/tmp/**"],
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+
+        _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Read", "tool_input": {"file_path": "/tmp/test.txt"}},
+            {"HOME": str(tmp_path)},
+        )
+
+        audit_log = tmp_path / ".claude" / "hooks" / "hook.jsonl"
+        assert audit_log.exists()
+        entry = json.loads(audit_log.read_text().strip().splitlines()[0])
+        assert entry["tool"] == "Read"
+        assert entry["decision"] == "allow"
+        assert entry["matched_rule"].startswith("read:")
+
+    def test_symlink_to_denied_rejected(self, tmp_path: Path) -> None:
+        """Symlink pointing to denied path should be rejected after resolution."""
+        _setup_config(tmp_path, {
+            "fileAccess": {
+                "readPaths": [f"{tmp_path}/**"],
+                "writePaths": [],
+                "denyPaths": [],
+            },
+        })
+        # Create real file in .ssh
+        ssh_dir = tmp_path / ".ssh"
+        ssh_dir.mkdir()
+        (ssh_dir / "id_rsa").write_text("secret key")
+
+        # Create symlink from safe location to .ssh file
+        link = tmp_path / "safe_link"
+        link.symlink_to(ssh_dir / "id_rsa")
+
+        code, out, _ = _run_hook(
+            "approve-fileops.sh",
+            {"tool_name": "Read", "tool_input": {"file_path": str(link)}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+        # Should NOT be allowed because resolved target is in .ssh
+        assert "allow" not in out
+
+
 class TestWebFetchDomains:
     def test_extra_domain_auto_approve(self, tmp_path: Path) -> None:
         """Domain from extraDomains should auto-approve."""

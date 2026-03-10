@@ -88,6 +88,23 @@ def merge_profiles(profiles: list[dict]) -> dict:
                     merged_mappings[canonical].append(alias)
                     existing.add(alias)
 
+    # File access: union readPaths across profiles. writePaths go to pendingWritePaths.
+    merged_read_paths: list[str] = []
+    seen_read_paths: set[str] = set()
+    merged_pending_write: list[str] = []
+    seen_pending_write: set[str] = set()
+
+    for profile in profiles:
+        fa = profile.get("fileAccess", {})
+        for rp in fa.get("readPaths", []):
+            if rp not in seen_read_paths:
+                seen_read_paths.add(rp)
+                merged_read_paths.append(rp)
+        for wp in fa.get("writePaths", []):
+            if wp not in seen_pending_write:
+                seen_pending_write.add(wp)
+                merged_pending_write.append(wp)
+
     merged: dict = {}
     if merged_domains:
         merged["webfetch"] = {"extraDomains": merged_domains}
@@ -95,6 +112,14 @@ def merge_profiles(profiles: list[dict]) -> dict:
         merged["bashAliases"] = merged_aliases
     if merged_mappings:
         merged["commandMappings"] = merged_mappings
+
+    file_access: dict = {}
+    if merged_read_paths:
+        file_access["readPaths"] = merged_read_paths
+    if merged_pending_write:
+        file_access["pendingWritePaths"] = merged_pending_write
+    if file_access:
+        merged["fileAccess"] = file_access
 
     return merged
 
@@ -126,6 +151,14 @@ def apply_overrides(merged: dict, overrides: dict) -> dict:
                 domains.remove(value)
         elif rtype == "commandMapping":
             merged.get("commandMappings", {}).pop(value, None)
+        elif rtype == "fileAccessRead":
+            read_paths = merged.get("fileAccess", {}).get("readPaths", [])
+            if value in read_paths:
+                read_paths.remove(value)
+        elif rtype == "fileAccessWrite":
+            write_paths = merged.get("fileAccess", {}).get("writePaths", [])
+            if value in write_paths:
+                write_paths.remove(value)
 
     return merged
 
@@ -304,6 +337,41 @@ def write_permission_config(
                 combined_domains.append(domain)
     if combined_domains:
         config["webfetch"] = {"extraDomains": combined_domains}
+
+    # Merge fileAccess: user first, then profile readPaths (writePaths from profiles NOT auto-merged)
+    user_fa = user_config.get("fileAccess", {})
+    merged_fa = merged.get("fileAccess", {})
+    combined_read: list[str] = []
+    seen_read: set[str] = set()
+    combined_write: list[str] = []
+    seen_write: set[str] = set()
+    combined_deny: list[str] = []
+    seen_deny: set[str] = set()
+
+    for source_fa in [user_fa, merged_fa]:
+        for rp in source_fa.get("readPaths", []):
+            if rp not in seen_read:
+                seen_read.add(rp)
+                combined_read.append(rp)
+    for wp in user_fa.get("writePaths", []):
+        if wp not in seen_write:
+            seen_write.add(wp)
+            combined_write.append(wp)
+    # Profile writePaths are NOT merged automatically (they're in pendingWritePaths)
+    for dp in user_fa.get("denyPaths", []):
+        if dp not in seen_deny:
+            seen_deny.add(dp)
+            combined_deny.append(dp)
+
+    if combined_read or combined_write or combined_deny:
+        fa: dict = {}
+        if combined_read:
+            fa["readPaths"] = combined_read
+        if combined_write:
+            fa["writePaths"] = combined_write
+        if combined_deny:
+            fa["denyPaths"] = combined_deny
+        config["fileAccess"] = fa
 
     # Compute resolvedCanonicals from settings.json
     if settings_path is None:

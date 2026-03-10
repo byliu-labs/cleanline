@@ -36,6 +36,10 @@ def build_usage_map(events: list[dict]) -> dict[str, str | None]:
             key = f"mapping:{parsed['canonical']}"
         elif rtype == "domain":
             key = f"domain:{parsed['pattern']}"
+        elif rtype == "read":
+            key = f"read:{parsed['pattern']}"
+        elif rtype == "write":
+            key = f"write:{parsed['pattern']}"
 
         if key is None:
             continue
@@ -143,9 +147,9 @@ def find_stale_rules(
     profiles = lockfile_data.get("profiles", [])
     merged = lockfile_data.get("merged", {})
 
-    user_stale: dict[str, list[dict]] = {"aliases": [], "mappings": [], "domains": []}
+    user_stale: dict[str, list[dict]] = {"aliases": [], "mappings": [], "domains": [], "file_paths": []}
     profile_stale: dict[str, list[dict]] = {"aliases": [], "mappings": [], "domains": []}
-    active_counts = {"aliases": 0, "mappings": 0, "domains": 0}
+    active_counts = {"aliases": 0, "mappings": 0, "domains": 0, "file_paths": 0}
 
     def _is_stale(rule_key: str) -> tuple[bool, str | None]:
         """Check if a rule key is stale. Returns (is_stale, last_used)."""
@@ -192,6 +196,30 @@ def find_stale_rules(
             })
         else:
             active_counts["domains"] += 1
+
+    # --- User config file read paths ---
+    for rp in config.get("fileAccess", {}).get("readPaths", []):
+        stale, last_used = _is_stale(f"read:{rp}")
+        if stale:
+            user_stale["file_paths"].append({
+                "pattern": rp,
+                "access": "read",
+                "last_used": last_used,
+            })
+        else:
+            active_counts["file_paths"] += 1
+
+    # --- User config file write paths ---
+    for wp in config.get("fileAccess", {}).get("writePaths", []):
+        stale, last_used = _is_stale(f"write:{wp}")
+        if stale:
+            user_stale["file_paths"].append({
+                "pattern": wp,
+                "access": "write",
+                "last_used": last_used,
+            })
+        else:
+            active_counts["file_paths"] += 1
 
     # --- Profile rules (from merged section) ---
     # Only check rules that come from profiles, not user config
@@ -295,6 +323,18 @@ def apply_tighten_user(removals: dict, config_path: Path) -> dict:
             domains.remove(pattern)
             removed_domains += 1
 
+    # Remove stale file paths from user_config
+    fa = user_config.get("fileAccess", {})
+    removed_file_paths = 0
+    for entry in removals.get("user_stale", {}).get("file_paths", []):
+        pattern = entry["pattern"]
+        access = entry.get("access", "read")
+        key = "readPaths" if access == "read" else "writePaths"
+        path_list = fa.get(key, [])
+        if pattern in path_list:
+            path_list.remove(pattern)
+            removed_file_paths += 1
+
     # Write lockfile + regenerate permission-config.json
     lockfile_mod.write_lockfile(lockfile_data)
     lockfile_mod.write_permission_config(config_path, lockfile_data)
@@ -305,6 +345,8 @@ def apply_tighten_user(removals: dict, config_path: Path) -> dict:
         result["actions"].append(f"removed {removed_mappings} mappings")
     if removed_domains:
         result["actions"].append(f"removed {removed_domains} domains")
+    if removed_file_paths:
+        result["actions"].append(f"removed {removed_file_paths} file paths")
 
     return result
 

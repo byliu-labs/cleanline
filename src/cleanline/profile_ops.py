@@ -63,6 +63,11 @@ def init_profile(source: str) -> dict:
                 f"mapping conflict on '{c['alias']}': {json.dumps(c['canonicals'])}"
             )
 
+    # Check for profile writePaths requiring opt-in
+    profile_write_paths = profile.get("fileAccess", {}).get("writePaths", [])
+    if profile_write_paths:
+        result.setdefault("pending_write_paths", profile_write_paths)
+
     # Merge
     lockfile_data = lockfile_mod.add_profile(lockfile_data, profile, source)
     lockfile_mod.write_lockfile(lockfile_data)
