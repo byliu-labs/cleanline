@@ -43,7 +43,7 @@ def fetch_github(spec: str) -> dict:
     """Fetch a profile from GitHub."""
     url = build_github_url(spec)
     try:
-        req = urllib.request.Request(url, headers={"User-Agent": "claude-hooks/0.1"})
+        req = urllib.request.Request(url, headers={"User-Agent": "cleanline/0.1"})
         with urllib.request.urlopen(req, timeout=15) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:

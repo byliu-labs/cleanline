@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from claude_hooks import lockfile as lockfile_mod
-from claude_hooks import profile_ops
+from cleanline import lockfile as lockfile_mod
+from cleanline import profile_ops
 
 
 def test_init_local_profile(tmp_path: Path, sample_profile: dict) -> None:

@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from claude_hooks.audit import (
+from cleanline.audit import (
     enrich_with_provenance,
     read_audit_log,
     summarize_decisions,

@@ -89,12 +89,19 @@ def get_status(lockfile_path: Path | None = None) -> dict:
     top_allow = audit_mod.top_rules(events, "allow", limit=5)
     top_passthrough = audit_mod.top_rules(events, "passthrough", limit=5)
 
+    # Hook health check
+    settings_path = setup_cmd.find_settings_path()
+    hook_health: list[str] = []
+    if settings_path:
+        hook_health = setup_cmd.check_hook_health(settings_path)
+
     return {
         "profiles": profiles_info,
         "merged_keys": list(lockfile_data.get("merged", {}).keys()),
         "audit_summary": summary,
         "top_auto_approved": top_allow,
         "top_passthroughs": top_passthrough,
+        "hook_health": hook_health,
     }
 
 

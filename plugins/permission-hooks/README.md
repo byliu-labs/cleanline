@@ -55,13 +55,13 @@ Edit `hooks/permission-config.json` to customize:
 
 ## Profile System
 
-Community profiles extend the config with shared rule sets. The `claude-hooks` CLI manages profiles as composable layers:
+Community profiles extend the config with shared rule sets. The `cleanline` CLI manages profiles as composable layers:
 
 ```bash
-uv run claude-hooks setup           # First-time setup
-uv run claude-hooks init <source>   # Add a profile
-uv run claude-hooks status          # Show installed profiles + audit stats
-uv run claude-hooks suggest         # Propose config changes from usage data
+uv run cleanline setup           # First-time setup
+uv run cleanline init <source>   # Add a profile
+uv run cleanline status          # Show installed profiles + audit stats
+uv run cleanline suggest         # Propose config changes from usage data
 ```
 
 Profiles merge into `~/.claude/hooks/profiles.lock.json`. Hooks read both the local config and the lock file.

@@ -128,6 +128,86 @@ class TestBashGate:
         assert '"decision":"allow"' in out or '{"decision":"allow"}' in out
 
 
+    def test_audit_log_escapes_special_characters(self, tmp_path: Path) -> None:
+        """Commands with quotes and special chars should produce valid JSONL audit entries."""
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        settings.write_text(json.dumps({
+            "permissions": {"allow": []}
+        }))
+
+        # Command with embedded quotes and backslashes
+        command = 'python3 -c "import sys; print(sys.path)"'
+        code, out, _ = _run_hook(
+            "bash-gate.sh",
+            {"tool_input": {"command": command}},
+            {"HOME": str(tmp_path)},
+        )
+        assert code == 0
+
+        # Verify the audit log contains valid JSON
+        audit_log = tmp_path / ".claude" / "hooks" / "hook.jsonl"
+        assert audit_log.exists(), "Audit log should have been created"
+        for line in audit_log.read_text().strip().splitlines():
+            entry = json.loads(line)  # Should NOT raise JSONDecodeError
+            assert entry["tool"] == "Bash"
+            assert entry["input"] == command
+            assert entry["decision"] == "passthrough"
+
+    def test_no_chaining_transitive_aliases(self, tmp_path: Path) -> None:
+        """Alias resolution must NOT recurse through multiple levels.
+
+        If mypy3 -> python3 and python3 -> python are both aliases,
+        running "mypy3 script.py" should NOT resolve to python through
+        two alias hops. Only one level of indirection is allowed.
+        """
+        settings = tmp_path / ".claude" / "settings.json"
+        settings.parent.mkdir(parents=True)
+        # Only "python" is in the allow list (not python3, not mypy3)
+        settings.write_text(json.dumps({
+            "permissions": {"allow": ["Bash(python *)"]}
+        }))
+
+        # Config with transitive aliases:
+        # mypy3 -> python3 (first hop)
+        # python3 -> python (second hop, if chaining were allowed)
+        config = {
+            "bashAliases": {"mypy3": "python3", "python3": "python"},
+            "commandMappings": {},
+        }
+        config_path = HOOKS_DIR / "permission-config.json"
+        original_config = config_path.read_text() if config_path.exists() else None
+
+        try:
+            config_path.write_text(json.dumps(config))
+
+            # "mypy3 script.py" -> alias lookup finds mypy3 -> python3
+            # check_settings_allow("python3") -> False (only "python" allowed)
+            # If chaining existed, it would then try python3 -> python -> allowed
+            # But chaining is NOT implemented, so this should NOT be allowed.
+            code, out, _ = _run_hook(
+                "bash-gate.sh",
+                {"tool_input": {"command": "mypy3 script.py"}},
+                {"HOME": str(tmp_path)},
+            )
+            assert code == 0
+            assert "allow" not in out
+
+            # Verify that python3 itself DOES resolve (single hop works)
+            code2, out2, _ = _run_hook(
+                "bash-gate.sh",
+                {"tool_input": {"command": "python3 script.py"}},
+                {"HOME": str(tmp_path)},
+            )
+            assert code2 == 0
+            assert '"decision":"allow"' in out2 or '{"decision":"allow"}' in out2
+        finally:
+            if original_config is not None:
+                config_path.write_text(original_config)
+            elif config_path.exists():
+                config_path.unlink()
+
+
 class TestWebFetchDomains:
     def test_extra_domain_auto_approve(self, tmp_path: Path) -> None:
         """Domain from extraDomains should auto-approve."""

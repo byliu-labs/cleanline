@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from claude_hooks.lockfile import (
+from cleanline.lockfile import (
     add_profile,
     merge_profiles,
     read_lockfile,

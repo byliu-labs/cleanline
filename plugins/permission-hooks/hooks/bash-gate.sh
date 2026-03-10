@@ -27,22 +27,17 @@ HOOK_DIR="$(cd "$(dirname "$0")" && pwd)"
 SETTINGS="$HOME/.claude/settings.json"
 CONFIG="$HOOK_DIR/permission-config.json"
 LOCKFILE="$HOME/.claude/hooks/profiles.lock.json"
-AUDIT_LOG="$HOME/.claude/hooks/hook.jsonl"
 
 INPUT=$(cat)
 
 # ============================================================================
 # AUDIT LOGGING
-# Minimal structured log — CLI enriches with provenance at query time.
+# Uses Python helper for proper JSON escaping of special characters in
+# commands (quotes, backslashes, etc.). Non-blocking via subshell.
 # ============================================================================
 log_decision() {
   local tool="$1" input="$2" decision="$3" rule="$4"
-  (
-    mkdir -p "$(dirname "$AUDIT_LOG")" 2>/dev/null
-    printf '{"ts":"%s","tool":"%s","input":"%s","decision":"%s","matched_rule":"%s"}\n' \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$tool" "$input" "$decision" "$rule" \
-      >> "$AUDIT_LOG"
-  ) 2>/dev/null || true
+  ( "$HOOK_DIR/log_event.py" "$tool" "$input" "$decision" "$rule" ) 2>/dev/null || true
 }
 
 # ============================================================================

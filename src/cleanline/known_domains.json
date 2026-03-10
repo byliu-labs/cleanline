@@ -1,0 +1,10 @@
+[
+  "*.w3.org",
+  "*.rust-lang.org",
+  "*.docs.rs",
+  "*.developer.apple.com",
+  "*.learn.microsoft.com",
+  "*.devdocs.io",
+  "*.man7.org",
+  "*.cppreference.com"
+]

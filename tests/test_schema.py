@@ -1,5 +1,5 @@
 """Tests for profile schema validation."""
-from claude_hooks.schema import MAX_ALIASES, MAX_DOMAINS, MAX_MAPPINGS, validate_profile
+from cleanline.schema import MAX_ALIASES, MAX_DOMAINS, MAX_MAPPINGS, validate_profile
 
 
 def test_valid_profile_passes(sample_profile: dict) -> None:

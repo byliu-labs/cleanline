@@ -1,6 +1,6 @@
-"""CLI entry point for claude-hooks.
+"""CLI entry point for Clean Line.
 
-Usage: claude-hooks <command> [options]
+Usage: cleanline <command> [options]
 
 Commands:
   setup              First-time onboarding
@@ -71,12 +71,27 @@ def _print_result(result: dict, label: str = "") -> int:
 def cmd_setup(args: argparse.Namespace) -> int:
     """Run the setup command."""
     config_dir = Path(args.config_dir) if args.config_dir else _default_hooks_dir()
+
+    if args.uninstall:
+        result = setup_cmd.run_uninstall(
+            config_dir,
+            auto_yes=args.yes,
+        )
+        return _print_result(result, "Uninstall")
+
     result = setup_cmd.run_setup(
         config_dir,
         profile_source=args.profile,
         dry_run=args.dry_run,
+        auto_yes=args.yes,
     )
-    return _print_result(result, "Setup")
+
+    # In non-interactive mode (dry-run), print result
+    if args.dry_run:
+        return _print_result(result, "Setup (dry run)")
+
+    # In interactive mode, run_setup prints its own output
+    return 1 if result.get("errors") else 0
 
 
 def cmd_init(args: argparse.Namespace) -> int:
@@ -118,6 +133,14 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("------------------------------------------")
         for rule, count in top_pass:
             print(f"  {rule}: {count}")
+
+    # Hook health check
+    health_warnings = result.get("hook_health", [])
+    if health_warnings:
+        print("\nHook Health Warnings")
+        print("--------------------")
+        for w in health_warnings:
+            print(f"  ! {w}")
 
     return 0
 
@@ -163,8 +186,28 @@ def cmd_suggest(args: argparse.Namespace) -> int:
             print(f"  {dom}: {count}")
 
     if not any([cmd_groups, domain_groups, top_cmds, top_doms]):
-        print("  No suggestions — all passthroughs are low frequency.")
+        print("  No suggestions -- all passthroughs are low frequency.")
 
+    # --apply: apply suggestions interactively
+    if args.apply and any([cmd_groups, domain_groups]):
+        return _apply_suggestions(suggestions)
+
+    return 0
+
+
+def _apply_suggestions(suggestions: dict) -> int:
+    """Apply suggested config changes interactively."""
+    config_dir = _default_hooks_dir()
+    config_path = config_dir / "permission-config.json"
+
+    result = suggest_mod.apply_suggestions(suggestions, config_path)
+    if result.get("cancelled"):
+        print("\nCancelled.")
+        return 0
+
+    print()
+    for action in result.get("actions", []):
+        print(f"  + {action}")
     return 0
 
 
@@ -188,16 +231,14 @@ def cmd_dry_run(args: argparse.Namespace) -> int:
 
 def _default_hooks_dir() -> Path:
     """Default hooks directory (where permission-config.json lives)."""
-    # Look for the plugin's hooks directory relative to this package
-    # Fall back to ~/.claude/hooks/
     return Path.home() / ".claude" / "hooks"
 
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="claude-hooks",
-        description="Manage composable permission profiles for Claude Code hooks.",
+        prog="cleanline",
+        description="Take the clean line -- fewer permission prompts in Claude Code.",
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -206,6 +247,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--profile", help="Also init a profile (github:user/repo or path)")
     p_setup.add_argument("--config-dir", help="Override config directory")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done")
+    p_setup.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+    p_setup.add_argument("--uninstall", action="store_true", help="Remove hooks and clean up")
 
     # init
     p_init = sub.add_parser("init", help="Add a profile")
@@ -215,7 +258,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="Show installed profiles and audit summary")
 
     # suggest
-    sub.add_parser("suggest", help="Propose config changes from audit data")
+    p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
+    p_suggest.add_argument("--apply", action="store_true", help="Apply suggested changes interactively")
 
     # update
     p_update = sub.add_parser("update", help="Re-fetch and update profiles")
