@@ -6,6 +6,8 @@ validates profiles before they're merged into the lock file.
 """
 from __future__ import annotations
 
+from .tiers import VALID_TIERS
+
 # Hard caps prevent a single profile from dominating the merged config
 MAX_ALIASES = 50
 MAX_MAPPINGS = 30
@@ -16,7 +18,7 @@ MAX_FILE_PATHS = 50
 WARN_THRESHOLD = 0.5
 
 REQUIRED_FIELDS = {"name", "version"}
-OPTIONAL_FIELDS = {"description", "author", "bashAliases", "commandMappings", "webfetch", "fileAccess"}
+OPTIONAL_FIELDS = {"description", "author", "bashAliases", "commandMappings", "webfetch", "fileAccess", "meta"}
 
 
 def validate_profile(profile: dict) -> tuple[list[str], list[str]]:
@@ -92,5 +94,18 @@ def validate_profile(profile: dict) -> tuple[list[str], list[str]]:
                     warnings.append(
                         f"fileAccess.{subkey} has {len(paths)} entries ({MAX_FILE_PATHS} max)"
                     )
+
+    # Validate meta block
+    meta = profile.get("meta")
+    if meta is not None:
+        if not isinstance(meta, dict):
+            errors.append("'meta' must be an object")
+        else:
+            rec_tier = meta.get("recommendedTier")
+            if rec_tier is not None and rec_tier not in VALID_TIERS:
+                errors.append(
+                    f"meta.recommendedTier '{rec_tier}' is not valid. "
+                    f"Must be one of: {sorted(VALID_TIERS)}"
+                )
 
     return errors, warnings

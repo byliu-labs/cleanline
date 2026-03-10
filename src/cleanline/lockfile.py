@@ -14,6 +14,8 @@ import json
 import re
 from pathlib import Path
 
+from .tiers import DEFAULT_TIER, validate_tier
+
 DEFAULT_LOCKFILE = Path.home() / ".claude" / "hooks" / "profiles.lock.json"
 BASH_ALLOW_PATTERN = re.compile(r"^Bash\((\S+?)(?:\s+\*)?\)$")
 
@@ -21,6 +23,14 @@ BASH_ALLOW_PATTERN = re.compile(r"^Bash\((\S+?)(?:\s+\*)?\)$")
 def get_lockfile_path() -> Path:
     """Return the global lock file path."""
     return DEFAULT_LOCKFILE
+
+
+def get_tier(lockfile_data: dict) -> str:
+    """Read tier from lockfile user_config. Returns DEFAULT_TIER if absent or invalid."""
+    tier = lockfile_data.get("user_config", {}).get("tier", DEFAULT_TIER)
+    if not validate_tier(tier):
+        return DEFAULT_TIER
+    return tier
 
 
 def read_lockfile(path: Path | None = None) -> dict:

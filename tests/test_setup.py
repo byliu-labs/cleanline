@@ -225,3 +225,85 @@ def test_setup_saves_user_config_to_lockfile(tmp_path: Path) -> None:
     assert "user_config" in data
     assert "bashAliases" in data["user_config"]
     assert "fileAccess" in data["user_config"]
+    assert data["user_config"]["tier"] == "balanced"  # default tier
+
+
+def test_generate_config_cautious_has_no_write_paths() -> None:
+    """Cautious tier should not generate writePaths."""
+    config = generate_config({"python"}, tier="cautious")
+    assert config["fileAccess"]["writePaths"] == []
+    assert config["commandMappings"] == {}
+    assert config["cleanlineTier"] == "cautious"
+
+
+def test_generate_config_balanced_has_tmp_write() -> None:
+    """Balanced tier should have /tmp/** in writePaths."""
+    config = generate_config({"python"}, tier="balanced")
+    assert "/tmp/**" in config["fileAccess"]["writePaths"]
+    assert config["cleanlineTier"] == "balanced"
+
+
+def test_generate_config_flow_has_documents() -> None:
+    """Flow tier should have broad read/write access."""
+    config = generate_config({"python"}, tier="flow")
+    assert "~/Documents/**" in config["fileAccess"]["readPaths"]
+    assert "~/Documents/**" in config["fileAccess"]["writePaths"]
+    assert "~/Desktop/**" in config["fileAccess"]["readPaths"]
+    assert "~/Desktop/**" in config["fileAccess"]["writePaths"]
+    assert config["cleanlineTier"] == "flow"
+
+
+def test_generate_config_domains_cumulative() -> None:
+    """Each tier includes all lower-tier domains."""
+    cautious = generate_config(set(), tier="cautious")
+    balanced = generate_config(set(), tier="balanced")
+    flow = generate_config(set(), tier="flow")
+
+    cautious_domains = set(cautious["webfetch"]["extraDomains"])
+    balanced_domains = set(balanced["webfetch"]["extraDomains"])
+    flow_domains = set(flow["webfetch"]["extraDomains"])
+
+    assert cautious_domains < balanced_domains
+    assert balanced_domains < flow_domains
+
+
+def test_generate_config_flow_has_command_mappings() -> None:
+    """Flow tier includes framework-specific command mappings."""
+    config = generate_config(set(), tier="flow")
+    assert "cargo build" in config["commandMappings"]
+    assert "pip install" in config["commandMappings"]
+
+
+def test_run_setup_stores_tier_in_lockfile(tmp_path: Path) -> None:
+    """Setup should store the selected tier in lockfile user_config."""
+    from cleanline import lockfile as lockfile_mod
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "permissions": {"allow": ["Bash(python *)"]}
+    }))
+
+    hooks_dir = tmp_path / "hooks"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    with (
+        patch("cleanline.setup_cmd.find_settings_path", return_value=settings_path),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
+        result = run_setup(hooks_dir, tier="cautious", auto_yes=True, interactive=True)
+
+    assert not result.get("errors")
+    data = json.loads(lockfile_path.read_text())
+    assert data["user_config"]["tier"] == "cautious"
+
+
+def test_generate_config_merges_scanned_file_paths_with_tier() -> None:
+    """Scanned file paths from settings.json merge with tier baseline."""
+    file_paths = {"readPaths": {"/my/project/**"}, "writePaths": {"/my/output/**"}}
+    config = generate_config(set(), file_paths=file_paths, tier="cautious")
+
+    # Cautious has no writePaths baseline, but scanned paths should still be included
+    assert "/my/project/**" in config["fileAccess"]["readPaths"]
+    assert "/my/output/**" in config["fileAccess"]["writePaths"]
+    # Cautious baseline read paths should also be present
+    assert "~/.claude/**" in config["fileAccess"]["readPaths"]

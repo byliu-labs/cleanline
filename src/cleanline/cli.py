@@ -25,6 +25,7 @@ from . import suggest as suggest_mod
 from . import audit as audit_mod
 from . import tighten as tighten_mod
 from . import lockfile as lockfile_mod
+from .tiers import DEFAULT_TIER, VALID_TIERS, get_tier_config
 
 
 def _print_json(data: dict) -> None:
@@ -77,6 +78,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     result = setup_cmd.run_setup(
         config_dir,
+        tier=args.tier,
         profile_source=args.profile,
         dry_run=args.dry_run,
         auto_yes=args.yes,
@@ -99,6 +101,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     """Run the status command."""
     result = profile_ops.get_status()
+
+    # Show tier
+    lockfile_data = lockfile_mod.read_lockfile()
+    tier = lockfile_mod.get_tier(lockfile_data)
+    print(f"\nTrust Tier: {tier}")
 
     print("\nInstalled Profiles")
     print("==================")
@@ -150,8 +157,11 @@ def cmd_suggest(args: argparse.Namespace) -> int:
         print("No audit data found. Run Claude Code with hooks enabled to generate data.")
         return 0
 
-    min_count = getattr(args, "min_count", suggest_mod.MIN_SUGGEST_COUNT)
-    suggestions = suggest_mod.generate_suggestions(events, min_count=min_count)
+    # Read tier for default thresholds; explicit --min-count overrides
+    lockfile_data = lockfile_mod.read_lockfile()
+    tier = lockfile_mod.get_tier(lockfile_data)
+    min_count = getattr(args, "min_count", None)
+    suggestions = suggest_mod.generate_suggestions(events, min_count=min_count, tier=tier)
 
     # Headline stats
     summary = audit_mod.summarize_decisions(events)
@@ -262,7 +272,10 @@ def cmd_tighten(args: argparse.Namespace) -> int:
     lockfile_path = lockfile_mod.get_lockfile_path()
     lockfile_data = lockfile_mod.read_lockfile(lockfile_path)
 
-    stale = tighten_mod.find_stale_rules(events, config, lockfile_data, args.days)
+    # Tier-aware staleness: --days overrides tier default when explicitly set
+    tier = lockfile_mod.get_tier(lockfile_data)
+    effective_days = args.days if args.days is not None else get_tier_config(tier)["tighten_days"]
+    stale = tighten_mod.find_stale_rules(events, config, lockfile_data, effective_days)
 
     # Print analysis
     span = stale["audit_span_days"]
@@ -394,6 +407,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # setup
     p_setup = sub.add_parser("setup", help="First-time onboarding")
+    p_setup.add_argument("--tier", choices=sorted(VALID_TIERS), default=DEFAULT_TIER,
+                          help=f"Trust tier (default: {DEFAULT_TIER})")
     p_setup.add_argument("--profile", help="Also init a profile (github:user/repo or path)")
     p_setup.add_argument("--config-dir", help="Override config directory")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done")
@@ -409,16 +424,16 @@ def build_parser() -> argparse.ArgumentParser:
     # suggest
     p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
     p_suggest.add_argument("--apply", action="store_true", help="Apply suggested changes interactively")
-    p_suggest.add_argument("--min-count", type=int, default=suggest_mod.MIN_SUGGEST_COUNT,
-                           help=f"Minimum passthrough count to suggest (default: {suggest_mod.MIN_SUGGEST_COUNT})")
+    p_suggest.add_argument("--min-count", type=int, default=None,
+                           help="Minimum passthrough count to suggest (default: tier-based)")
 
     # tighten
     p_tighten = sub.add_parser("tighten",
                                help="Identify and remove stale permission rules (least privilege)")
     p_tighten.add_argument("--apply", action="store_true",
                            help="Remove/suppress stale rules interactively")
-    p_tighten.add_argument("--days", type=int, default=30,
-                           help="Flag rules unused for N days (default: 30)")
+    p_tighten.add_argument("--days", type=int, default=None,
+                           help="Flag rules unused for N days (default: tier-based)")
     p_tighten.add_argument("--force", action="store_true",
                            help="Allow --apply even with insufficient audit data")
 

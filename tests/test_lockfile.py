@@ -6,6 +6,7 @@ from cleanline.lockfile import (
     add_override,
     add_profile,
     apply_overrides,
+    get_tier,
     merge_profiles,
     read_lockfile,
     rebuild_merged,
@@ -383,6 +384,25 @@ def test_merge_profiles_write_paths_go_to_pending(
     fa = merged.get("fileAccess", {})
     assert "/opt/cache/**" in fa.get("pendingWritePaths", [])
     assert "writePaths" not in fa
+
+
+def test_get_tier_default() -> None:
+    """Missing tier in user_config returns balanced."""
+    assert get_tier({"profiles": [], "merged": {}}) == "balanced"
+    assert get_tier({"user_config": {}}) == "balanced"
+
+
+def test_get_tier_from_user_config() -> None:
+    """Reads tier from user_config."""
+    assert get_tier({"user_config": {"tier": "cautious"}}) == "cautious"
+    assert get_tier({"user_config": {"tier": "flow"}}) == "flow"
+
+
+def test_get_tier_invalid_falls_back() -> None:
+    """Invalid tier values fall back to balanced."""
+    assert get_tier({"user_config": {"tier": "extreme"}}) == "balanced"
+    assert get_tier({"user_config": {"tier": ""}}) == "balanced"
+    assert get_tier({"user_config": {"tier": 42}}) == "balanced"
 
 
 def test_write_permission_config_no_settings(tmp_path: Path) -> None:

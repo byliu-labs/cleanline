@@ -15,17 +15,28 @@ import sys
 from importlib.resources import files as pkg_files
 from pathlib import Path
 
-
-def _load_known_domains() -> list[str]:
-    """Load the default documentation domain list."""
-    data_file = pkg_files("cleanline").joinpath("known_domains.json")
-    return json.loads(data_file.read_text())
+from .tiers import DEFAULT_TIER, get_tier_config, validate_tier
 
 
-def _load_known_file_paths() -> dict:
-    """Load the default file access paths."""
-    data_file = pkg_files("cleanline").joinpath("known_file_paths.json")
-    return json.loads(data_file.read_text())
+def _load_domains_for_tier(tier: str) -> list[str]:
+    """Load the cumulative domain list for a tier.
+
+    Cautious = base 8 docs domains.
+    Balanced = cautious + 7 popular domains.
+    Flow = balanced + 3 more domains.
+    """
+    base = json.loads(pkg_files("cleanline").joinpath("known_domains.json").read_text())
+    if tier == "cautious":
+        return base
+    balanced_extras = json.loads(
+        pkg_files("cleanline").joinpath("known_domains_balanced.json").read_text()
+    )
+    if tier == "balanced":
+        return base + balanced_extras
+    flow_extras = json.loads(
+        pkg_files("cleanline").joinpath("known_domains_flow.json").read_text()
+    )
+    return base + balanced_extras + flow_extras
 
 
 # Pattern to extract canonical from allow list entries like "Bash(python *)"
@@ -102,23 +113,25 @@ def generate_aliases(canonicals: set[str], known_aliases: dict[str, list[str]]) 
 def generate_config(
     canonicals: set[str],
     file_paths: dict[str, set[str]] | None = None,
+    tier: str = DEFAULT_TIER,
 ) -> dict:
-    """Generate a permission-config.json with aliases, domains, fileAccess, and resolvedCanonicals."""
+    """Generate a permission-config.json parameterized by tier."""
+    tier_cfg = get_tier_config(tier)
     known = load_known_aliases()
     aliases = generate_aliases(canonicals, known)
-    domains = _load_known_domains()
-    known_fp = _load_known_file_paths()
+    domains = _load_domains_for_tier(tier)
 
     config: dict = {
+        "cleanlineTier": tier,
         "webfetch": {"extraDomains": domains},
     }
     if aliases:
         config["bashAliases"] = aliases
-    config["commandMappings"] = {}
+    config["commandMappings"] = dict(tier_cfg["command_mappings"])
 
-    # Build fileAccess from known defaults + scanned paths
-    read_paths = set(known_fp.get("readPaths", []))
-    write_paths = set(known_fp.get("writePaths", []))
+    # File access: tier baseline + scanned paths from settings.json
+    read_paths = set(tier_cfg["read_paths"])
+    write_paths = set(tier_cfg["write_paths"])
     if file_paths:
         read_paths.update(file_paths.get("readPaths", set()))
         write_paths.update(file_paths.get("writePaths", set()))
@@ -269,6 +282,7 @@ def confirm_proceed(auto_yes: bool = False) -> bool:
 def run_setup(
     config_dir: Path,
     *,
+    tier: str = DEFAULT_TIER,
     profile_source: str | None = None,
     dry_run: bool = False,
     auto_yes: bool = False,
@@ -307,8 +321,8 @@ def run_setup(
         if not dry_run:
             result["warnings"].append("~/.claude/settings.json not found")
 
-    # Step 2: Generate config (now includes resolvedCanonicals + fileAccess)
-    config = generate_config(canonicals, file_paths=file_paths)
+    # Step 2: Generate config parameterized by tier
+    config = generate_config(canonicals, file_paths=file_paths, tier=tier)
     result["config"] = config
 
     # Step 3: Interactive summary
@@ -327,6 +341,7 @@ def run_setup(
         # Write user_config to lockfile for future mutations
         lockfile_data = lockfile_mod.read_lockfile()
         lockfile_data["user_config"] = {
+            "tier": tier,
             "bashAliases": config.get("bashAliases", {}),
             "commandMappings": config.get("commandMappings", {}),
             "webfetch": config.get("webfetch", {}),

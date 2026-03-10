@@ -134,3 +134,39 @@ def test_file_access_invalid_type() -> None:
     profile = {"name": "test", "version": "1.0", "fileAccess": "not-a-dict"}
     errors, _ = validate_profile(profile)
     assert any("fileAccess" in e and "object" in e for e in errors)
+
+
+def test_meta_recommended_tier_valid() -> None:
+    """Valid recommendedTier should pass validation."""
+    for tier in ("cautious", "balanced", "flow"):
+        profile = {"name": "test", "version": "1.0", "meta": {"recommendedTier": tier}}
+        errors, _ = validate_profile(profile)
+        assert errors == [], f"tier '{tier}' should be valid"
+
+
+def test_meta_recommended_tier_invalid() -> None:
+    """Invalid recommendedTier should fail validation."""
+    profile = {"name": "test", "version": "1.0", "meta": {"recommendedTier": "extreme"}}
+    errors, _ = validate_profile(profile)
+    assert any("recommendedTier" in e for e in errors)
+
+
+def test_meta_not_dict_fails() -> None:
+    """meta must be a dict."""
+    profile = {"name": "test", "version": "1.0", "meta": "string"}
+    errors, _ = validate_profile(profile)
+    assert any("meta" in e and "object" in e for e in errors)
+
+
+def test_meta_without_recommended_tier_ok() -> None:
+    """meta dict without recommendedTier is fine."""
+    profile = {"name": "test", "version": "1.0", "meta": {"author": "someone"}}
+    errors, _ = validate_profile(profile)
+    assert errors == []
+
+
+def test_no_meta_ok() -> None:
+    """Profile without meta block is fine."""
+    profile = {"name": "test", "version": "1.0"}
+    errors, _ = validate_profile(profile)
+    assert errors == []

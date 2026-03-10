@@ -176,3 +176,62 @@ def test_update_preserves_valid_overrides(tmp_path: Path) -> None:
     remaining = data.get("user_overrides", {}).get("removed_rules", [])
     remaining_values = [r["value"] for r in remaining]
     assert "pip3" in remaining_values
+
+
+def test_init_warns_when_profile_tier_exceeds_user_tier(tmp_path: Path) -> None:
+    """Profile with higher recommendedTier than user's current tier triggers warning."""
+    lockfile_path = tmp_path / "profiles.lock.json"
+    config_path = tmp_path / "permission-config.json"
+
+    # User is on cautious tier
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"tier": "cautious"},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    profile = {
+        "name": "ml-research",
+        "version": "1.0.0",
+        "meta": {"recommendedTier": "balanced"},
+        "bashAliases": {"pip3": "pip"},
+    }
+
+    with (
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile),
+        patch("cleanline.setup_cmd.find_settings_path", return_value=None),
+    ):
+        result = profile_ops.init_profile("local:ml.json")
+
+    assert any("recommends tier" in w and "cautious" in w for w in result["warnings"])
+
+
+def test_init_no_warning_when_profile_tier_matches(tmp_path: Path) -> None:
+    """No warning when profile tier matches or is below user tier."""
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    # User is on flow tier
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"tier": "flow"},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    profile = {
+        "name": "basic",
+        "version": "1.0.0",
+        "meta": {"recommendedTier": "balanced"},
+        "bashAliases": {"pip3": "pip"},
+    }
+
+    with (
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile),
+        patch("cleanline.setup_cmd.find_settings_path", return_value=None),
+    ):
+        result = profile_ops.init_profile("local:basic.json")
+
+    # No tier-related warnings
+    tier_warnings = [w for w in result["warnings"] if "recommends tier" in w]
+    assert len(tier_warnings) == 0
