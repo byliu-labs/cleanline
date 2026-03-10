@@ -1,0 +1,40 @@
+{
+  "bashAliases": {
+    "python3": "python",
+    "python3.11": "python",
+    "python3.12": "python",
+    "python3.13": "python",
+    "python3.14": "python",
+    "pip3": "pip",
+    "py.test": "pytest",
+    "npx": "npm",
+    "nodejs": "node",
+    "cargo-clippy": "cargo",
+    "cargo-fmt": "cargo"
+  },
+  "commandMappings": {
+    "pip install": ["pip3 install", "uv pip install"],
+    "pytest": ["python -m pytest", "python3 -m pytest"],
+    "npm test": ["npx jest"]
+  },
+  "webfetch": {
+    "extraDomains": [
+      "*.github.com",
+      "*.githubusercontent.com",
+      "*.python.org",
+      "*.readthedocs.io",
+      "*.docs.rs",
+      "*.mozilla.org",
+      "*.stackoverflow.com",
+      "*.npmjs.com",
+      "*.w3.org",
+      "*.rust-lang.org",
+      "*.developer.apple.com",
+      "*.learn.microsoft.com",
+      "*.devdocs.io",
+      "*.man7.org",
+      "*.cppreference.com"
+    ]
+  },
+  "resolvedCanonicals": []
+}

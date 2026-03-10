@@ -67,6 +67,52 @@ def read_audit_log(path: Path | None = None, max_lines: int = 10000) -> list[dic
     return list(reversed(lines[-max_lines:]))
 
 
+def rotate_audit_log(path: Path | None = None, max_age_days: int = 30) -> int:
+    """Remove audit entries older than max_age_days. Returns count removed."""
+    from datetime import datetime, timedelta, timezone
+
+    path = path or DEFAULT_AUDIT_LOG
+    if not path.exists():
+        return 0
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    cutoff_str = cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    kept: list[str] = []
+    removed = 0
+
+    try:
+        with open(path) as f:
+            for line in f:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    entry = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("ts", "")
+                if ts >= cutoff_str:
+                    kept.append(stripped)
+                else:
+                    removed += 1
+    except OSError:
+        return 0
+
+    if removed > 0:
+        try:
+            tmp = path.with_suffix(".tmp")
+            with open(tmp, "w") as f:
+                for line in kept:
+                    f.write(line)
+                    f.write("\n")
+            tmp.rename(path)
+        except OSError:
+            return 0
+
+    return removed
+
+
 def summarize_decisions(events: list[dict]) -> dict[str, int]:
     """Count events by decision type."""
     counts: Counter[str] = Counter()

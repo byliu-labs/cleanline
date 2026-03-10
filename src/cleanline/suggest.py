@@ -185,11 +185,15 @@ def generate_suggestions(
 
 
 def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
-    """Apply suggested aliases and domains to permission-config.json.
+    """Apply suggested aliases and domains via lockfile user_config.
 
-    Prompts for confirmation, then updates the config file.
+    Prompts for confirmation, then updates user_config in lockfile and
+    regenerates permission-config.json.
+
     Returns {"actions": [...], "cancelled": bool}
     """
+    from . import lockfile as lockfile_mod
+
     result: dict = {"actions": [], "cancelled": False}
 
     # Collect what we'd add
@@ -229,24 +233,20 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
         result["cancelled"] = True
         return result
 
-    # Read current config
-    config: dict = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    # Update user_config in lockfile
+    lockfile_data = lockfile_mod.read_lockfile()
+    user_config = lockfile_data.setdefault("user_config", {})
 
-    # Merge aliases
-    existing_aliases = config.setdefault("bashAliases", {})
+    # Merge aliases into user_config
+    existing_aliases = user_config.setdefault("bashAliases", {})
     added_aliases = 0
     for variant, canonical in new_aliases.items():
         if variant not in existing_aliases:
             existing_aliases[variant] = canonical
             added_aliases += 1
 
-    # Merge domains
-    existing_domains = config.setdefault("webfetch", {}).setdefault("extraDomains", [])
+    # Merge domains into user_config
+    existing_domains = user_config.setdefault("webfetch", {}).setdefault("extraDomains", [])
     existing_set = set(existing_domains)
     added_domains = 0
     for domain in new_domains:
@@ -255,17 +255,13 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
             existing_set.add(domain)
             added_domains += 1
 
-    # Write atomically
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = config_path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(config, f, indent=2)
-        f.write("\n")
-    tmp.rename(config_path)
+    # Write lockfile + regenerate permission-config.json
+    lockfile_mod.write_lockfile(lockfile_data)
+    lockfile_mod.write_permission_config(config_path, lockfile_data)
 
     if added_aliases:
-        result["actions"].append(f"added {added_aliases} aliases to {config_path}")
+        result["actions"].append(f"added {added_aliases} aliases")
     if added_domains:
-        result["actions"].append(f"added {added_domains} domains to {config_path}")
+        result["actions"].append(f"added {added_domains} domains")
 
     return result

@@ -12,6 +12,7 @@ from cleanline.lockfile import (
     remove_profile,
     remove_redundant_overrides,
     write_lockfile,
+    write_permission_config,
 )
 
 
@@ -210,3 +211,105 @@ def test_remove_redundant_overrides() -> None:
     remaining_values = [r["value"] for r in data["user_overrides"]["removed_rules"]]
     assert "pip3" in remaining_values
     assert "py.test" not in remaining_values
+
+
+# ============================================================================
+# USER_CONFIG
+# ============================================================================
+
+
+def test_read_lockfile_preserves_user_config(tmp_lockfile: Path) -> None:
+    data = {
+        "profiles": [],
+        "merged": {},
+        "user_config": {
+            "bashAliases": {"python3": "python"},
+            "webfetch": {"extraDomains": ["*.example.com"]},
+        },
+    }
+    write_lockfile(data, tmp_lockfile)
+    loaded = read_lockfile(tmp_lockfile)
+    assert loaded["user_config"]["bashAliases"]["python3"] == "python"
+    assert "*.example.com" in loaded["user_config"]["webfetch"]["extraDomains"]
+
+
+# ============================================================================
+# WRITE_PERMISSION_CONFIG
+# ============================================================================
+
+
+def test_write_permission_config_merges_user_and_profiles(tmp_path: Path) -> None:
+    """permission-config.json should contain both user_config and profile rules."""
+    config_path = tmp_path / "permission-config.json"
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({
+        "permissions": {"allow": ["Bash(python *)", "Bash(npm *)"]}
+    }))
+
+    lockfile_data = {
+        "profiles": [],
+        "merged": {
+            "bashAliases": {"cargo-nightly": "cargo"},
+            "webfetch": {"extraDomains": ["*.docs.rs"]},
+        },
+        "user_config": {
+            "bashAliases": {"python3": "python"},
+            "commandMappings": {"npm test": ["npx jest"]},
+            "webfetch": {"extraDomains": ["*.example.com"]},
+        },
+    }
+
+    write_permission_config(config_path, lockfile_data, settings_path)
+
+    assert config_path.exists()
+    config = json.loads(config_path.read_text())
+
+    # User aliases present
+    assert config["bashAliases"]["python3"] == "python"
+    # Profile aliases present
+    assert config["bashAliases"]["cargo-nightly"] == "cargo"
+    # User mappings present
+    assert "npm test" in config["commandMappings"]
+    # Both domain sources merged
+    assert "*.example.com" in config["webfetch"]["extraDomains"]
+    assert "*.docs.rs" in config["webfetch"]["extraDomains"]
+    # Canonicals from settings.json
+    assert "python" in config["resolvedCanonicals"]
+    assert "npm" in config["resolvedCanonicals"]
+
+
+def test_write_permission_config_user_aliases_take_priority(tmp_path: Path) -> None:
+    """User aliases should not be overwritten by profile aliases."""
+    config_path = tmp_path / "permission-config.json"
+
+    lockfile_data = {
+        "profiles": [],
+        "merged": {
+            "bashAliases": {"python3": "python3-profile-canonical"},
+        },
+        "user_config": {
+            "bashAliases": {"python3": "python"},
+        },
+    }
+
+    write_permission_config(config_path, lockfile_data)
+
+    config = json.loads(config_path.read_text())
+    # User's alias should win
+    assert config["bashAliases"]["python3"] == "python"
+
+
+def test_write_permission_config_no_settings(tmp_path: Path) -> None:
+    """Without settings.json, resolvedCanonicals should be empty."""
+    config_path = tmp_path / "permission-config.json"
+
+    lockfile_data = {
+        "profiles": [],
+        "merged": {},
+        "user_config": {"bashAliases": {"python3": "python"}},
+    }
+
+    write_permission_config(config_path, lockfile_data, tmp_path / "nonexistent.json")
+
+    config = json.loads(config_path.read_text())
+    assert config["resolvedCanonicals"] == []

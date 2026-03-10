@@ -252,11 +252,19 @@ def test_select_rules_to_remove_returns_all() -> None:
 
 
 def test_apply_tighten_user_removes_aliases(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({
-        "bashAliases": {"ruby3.0": "ruby", "python3.12": "python"},
-        "webfetch": {"extraDomains": []},
-    }))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {
+            "bashAliases": {"ruby3.0": "ruby", "python3.12": "python"},
+            "webfetch": {"extraDomains": []},
+        },
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     removals = {
         "user_stale": {
@@ -265,20 +273,29 @@ def test_apply_tighten_user_removes_aliases(tmp_path: Path) -> None:
             "domains": [],
         }
     }
-    result = apply_tighten_user(removals, config_path)
+    with patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path):
+        result = apply_tighten_user(removals, config_path)
     assert not result["cancelled"]
     assert any("1 aliases" in a for a in result["actions"])
 
-    config = json.loads(config_path.read_text())
-    assert "ruby3.0" not in config["bashAliases"]
-    assert "python3.12" in config["bashAliases"]
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "ruby3.0" not in data["user_config"]["bashAliases"]
+    assert "python3.12" in data["user_config"]["bashAliases"]
 
 
 def test_apply_tighten_user_removes_domains(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({
-        "webfetch": {"extraDomains": ["*.cppreference.com", "*.docs.rs"]},
-    }))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {
+            "webfetch": {"extraDomains": ["*.cppreference.com", "*.docs.rs"]},
+        },
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     removals = {
         "user_stale": {
@@ -287,19 +304,28 @@ def test_apply_tighten_user_removes_domains(tmp_path: Path) -> None:
             "domains": [{"pattern": "*.cppreference.com"}],
         }
     }
-    result = apply_tighten_user(removals, config_path)
+    with patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path):
+        result = apply_tighten_user(removals, config_path)
     assert any("1 domains" in a for a in result["actions"])
 
-    config = json.loads(config_path.read_text())
-    assert "*.cppreference.com" not in config["webfetch"]["extraDomains"]
-    assert "*.docs.rs" in config["webfetch"]["extraDomains"]
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "*.cppreference.com" not in data["user_config"]["webfetch"]["extraDomains"]
+    assert "*.docs.rs" in data["user_config"]["webfetch"]["extraDomains"]
 
 
 def test_apply_tighten_user_removes_mappings(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({
-        "commandMappings": {"npm test": ["jest"], "pip install": ["pip3 install"]},
-    }))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {
+            "commandMappings": {"npm test": ["jest"], "pip install": ["pip3 install"]},
+        },
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     removals = {
         "user_stale": {
@@ -308,12 +334,13 @@ def test_apply_tighten_user_removes_mappings(tmp_path: Path) -> None:
             "domains": [],
         }
     }
-    result = apply_tighten_user(removals, config_path)
+    with patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path):
+        result = apply_tighten_user(removals, config_path)
     assert any("1 mappings" in a for a in result["actions"])
 
-    config = json.loads(config_path.read_text())
-    assert "pip install" not in config["commandMappings"]
-    assert "npm test" in config["commandMappings"]
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "pip install" not in data["user_config"]["commandMappings"]
+    assert "npm test" in data["user_config"]["commandMappings"]
 
 
 # ============================================================================
@@ -467,7 +494,6 @@ def test_cmd_tighten_allows_apply_with_force(capsys: object) -> None:
         patch("cleanline.cli.audit_mod.read_audit_log", return_value=events),
         patch("cleanline.cli._default_hooks_dir") as mock_dir,
         patch.object(lockfile_mod, "get_lockfile_path") as mock_lf,
-        patch("cleanline.cli.lockfile_mod.read_lockfile", return_value={"profiles": [], "merged": {}}),
         patch("builtins.input", return_value="y"),
     ):
         import tempfile
@@ -476,8 +502,14 @@ def test_cmd_tighten_allows_apply_with_force(capsys: object) -> None:
             td_path = P(td)
             config_path = td_path / "permission-config.json"
             config_path.write_text(json.dumps(config))
+            lockfile_path = td_path / "profiles.lock.json"
+            lockfile_data = {
+                "profiles": [], "merged": {},
+                "user_config": {"bashAliases": {"ruby3.0": "ruby"}, "webfetch": {"extraDomains": []}},
+            }
+            lockfile_path.write_text(json.dumps(lockfile_data))
             mock_dir.return_value = td_path
-            mock_lf.return_value = td_path / "profiles.lock.json"
+            mock_lf.return_value = lockfile_path
             exit_code = cmd_tighten(args)
 
     assert exit_code == 0

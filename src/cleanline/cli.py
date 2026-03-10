@@ -75,13 +75,6 @@ def cmd_setup(args: argparse.Namespace) -> int:
     """Run the setup command."""
     config_dir = Path(args.config_dir) if args.config_dir else _default_hooks_dir()
 
-    if args.uninstall:
-        result = setup_cmd.run_uninstall(
-            config_dir,
-            auto_yes=args.yes,
-        )
-        return _print_result(result, "Uninstall")
-
     result = setup_cmd.run_setup(
         config_dir,
         profile_source=args.profile,
@@ -146,14 +139,6 @@ def cmd_status(args: argparse.Namespace) -> int:
         print("------------------------------------------")
         for rule, count in top_pass:
             print(f"  {rule}: {count}")
-
-    # Hook health check
-    health_warnings = result.get("hook_health", [])
-    if health_warnings:
-        print("\nHook Health Warnings")
-        print("--------------------")
-        for w in health_warnings:
-            print(f"  ! {w}")
 
     return 0
 
@@ -396,7 +381,6 @@ def build_parser() -> argparse.ArgumentParser:
     p_setup.add_argument("--config-dir", help="Override config directory")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done")
     p_setup.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
-    p_setup.add_argument("--uninstall", action="store_true", help="Remove hooks and clean up")
 
     # init
     p_init = sub.add_parser("init", help="Add a profile")

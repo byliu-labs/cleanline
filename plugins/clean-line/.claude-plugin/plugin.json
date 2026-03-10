@@ -1,0 +1,5 @@
+{
+  "name": "clean-line",
+  "description": "Reduce Claude Code permission prompts via alias resolution, command mapping, and domain matching.",
+  "version": "1.0.0"
+}

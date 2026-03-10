@@ -259,21 +259,17 @@ def select_rules_to_remove(stale: dict) -> dict:
 
 
 def apply_tighten_user(removals: dict, config_path: Path) -> dict:
-    """Remove stale rules from permission-config.json.
+    """Remove stale rules from user_config in lockfile and regenerate permission-config.json.
 
     Returns {"actions": [...], "cancelled": False}
     """
     result: dict = {"actions": [], "cancelled": False}
 
-    config: dict = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    lockfile_data = lockfile_mod.read_lockfile()
+    user_config = lockfile_data.get("user_config", {})
 
-    # Remove stale aliases
-    aliases = config.get("bashAliases", {})
+    # Remove stale aliases from user_config
+    aliases = user_config.get("bashAliases", {})
     removed_aliases = 0
     for entry in removals.get("user_stale", {}).get("aliases", []):
         key = entry["key"]
@@ -281,8 +277,8 @@ def apply_tighten_user(removals: dict, config_path: Path) -> dict:
             del aliases[key]
             removed_aliases += 1
 
-    # Remove stale mappings
-    mappings = config.get("commandMappings", {})
+    # Remove stale mappings from user_config
+    mappings = user_config.get("commandMappings", {})
     removed_mappings = 0
     for entry in removals.get("user_stale", {}).get("mappings", []):
         canonical = entry["canonical"]
@@ -290,8 +286,8 @@ def apply_tighten_user(removals: dict, config_path: Path) -> dict:
             del mappings[canonical]
             removed_mappings += 1
 
-    # Remove stale domains
-    domains = config.get("webfetch", {}).get("extraDomains", [])
+    # Remove stale domains from user_config
+    domains = user_config.get("webfetch", {}).get("extraDomains", [])
     removed_domains = 0
     for entry in removals.get("user_stale", {}).get("domains", []):
         pattern = entry["pattern"]
@@ -299,13 +295,9 @@ def apply_tighten_user(removals: dict, config_path: Path) -> dict:
             domains.remove(pattern)
             removed_domains += 1
 
-    # Atomic write
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = config_path.with_suffix(".tmp")
-    with open(tmp, "w") as f:
-        json.dump(config, f, indent=2)
-        f.write("\n")
-    tmp.rename(config_path)
+    # Write lockfile + regenerate permission-config.json
+    lockfile_mod.write_lockfile(lockfile_data)
+    lockfile_mod.write_permission_config(config_path, lockfile_data)
 
     if removed_aliases:
         result["actions"].append(f"removed {removed_aliases} aliases")

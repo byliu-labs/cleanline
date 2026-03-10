@@ -66,6 +66,11 @@ def init_profile(source: str) -> dict:
     # Merge
     lockfile_data = lockfile_mod.add_profile(lockfile_data, profile, source)
     lockfile_mod.write_lockfile(lockfile_data)
+
+    # Regenerate permission-config.json
+    config_path = lockfile_mod.get_lockfile_path().parent / "permission-config.json"
+    lockfile_mod.write_permission_config(config_path, lockfile_data)
+
     result["actions"].append(f"added profile '{profile['name']}' v{profile['version']}")
 
     return result
@@ -89,19 +94,12 @@ def get_status(lockfile_path: Path | None = None) -> dict:
     top_allow = audit_mod.top_rules(events, "allow", limit=5)
     top_passthrough = audit_mod.top_rules(events, "passthrough", limit=5)
 
-    # Hook health check
-    settings_path = setup_cmd.find_settings_path()
-    hook_health: list[str] = []
-    if settings_path:
-        hook_health = setup_cmd.check_hook_health(settings_path)
-
     return {
         "profiles": profiles_info,
         "merged_keys": list(lockfile_data.get("merged", {}).keys()),
         "audit_summary": summary,
         "top_auto_approved": top_allow,
         "top_passthroughs": top_passthrough,
-        "hook_health": hook_health,
     }
 
 
@@ -160,6 +158,11 @@ def update_profiles(
                 )
         lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
+        # Regenerate permission-config.json
+        lf_path = lockfile_path or lockfile_mod.get_lockfile_path()
+        config_path = lf_path.parent / "permission-config.json"
+        lockfile_mod.write_permission_config(config_path, lockfile_data)
+
     return result
 
 
@@ -187,6 +190,12 @@ def remove_profile(name: str, lockfile_path: Path | None = None) -> dict:
     removed_domains = old_domains - new_domains
 
     lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    # Regenerate permission-config.json
+    lf_path = lockfile_path or lockfile_mod.get_lockfile_path()
+    config_path = lf_path.parent / "permission-config.json"
+    lockfile_mod.write_permission_config(config_path, lockfile_data)
+
     result["actions"].append(f"removed profile '{name}'")
 
     if removed_aliases:

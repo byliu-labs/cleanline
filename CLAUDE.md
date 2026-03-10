@@ -5,71 +5,85 @@ Reduces prompt fatigue by auto-approving safe, predictable tool calls.
 
 ## Architecture
 
-Two independent codepaths that share zero code:
+Two independent codepaths — hooks (fast, single-process) and CLI (management):
 
 ```
-Hooks (shell + Python helpers)          CLI (Python package)
-  bash-gate.sh                            src/cleanline/cli.py
-  approve-webfetch-domains.sh             src/cleanline/setup_cmd.py
-  normalize-bash-cmd.py                   src/cleanline/profile_ops.py
-  match-command-equiv.py                  src/cleanline/lockfile.py
-  parse-url-host.py                       src/cleanline/schema.py
-  bash_utils.py                           src/cleanline/fetch.py
-  log_event.py                            src/cleanline/conflicts.py
-                                          src/cleanline/suggest.py
-                                          src/cleanline/audit.py
+Plugin (bash dispatcher + Python)      CLI (Python package)
+  scripts/bash-gate.sh (thin)            src/cleanline/cli.py
+  scripts/resolve.py (single entry)      src/cleanline/setup_cmd.py
+  scripts/approve-webfetch-domains.sh    src/cleanline/profile_ops.py
+  scripts/resolve_webfetch.py            src/cleanline/lockfile.py
+  scripts/default-config.json            src/cleanline/schema.py
+                                         src/cleanline/suggest.py
+                                         src/cleanline/tighten.py
+                                         src/cleanline/audit.py
         |                                        |
-        | reads                                  | reads/writes
+        | reads (ONE file)                       | reads/writes
         v                                        v
-  permission-config.json (user rules)   profiles.lock.json (managed)
-  profiles.lock.json (profile rules)    permission-config.json (generated)
-  hook.jsonl (audit log, append)        hook.jsonl (audit log, read)
+  permission-config.json               profiles.lock.json (user_config + profiles)
+  hook.jsonl (audit log, append)        permission-config.json (generated output)
+                                        hook.jsonl (audit log, read)
 ```
 
-Hooks stay dumb -- they read config and make allow/defer decisions. CLI manages everything.
+Hooks read **only** `permission-config.json` (not the lockfile). CLI generates `permission-config.json` by merging user_config + profile rules from the lockfile.
 
 ## Key Design Decisions
 
-- **Fail-closed**: All hooks exit 0 silently on error (defer to normal permissions). Only explicit matches produce `{"decision":"allow"}`.
-- **No chaining**: Each resolution layer resolves against the allow list independently. One level of indirection only.
-- **Backward compat**: `match-command-equiv.py` reads both `commandMappings` (new) and `commandEquivalences` (legacy).
+- **Fail-closed**: All hooks exit silently on error (defer to normal permissions). Only explicit matches produce `{"decision":"allow"}`.
+- **Single Python entry point**: bash-gate.sh → resolve.py (one interpreter startup). No multi-subprocess pipeline.
+- **No chaining**: One level of alias indirection only. If an alias resolves to a value that is itself an alias, the second lookup is skipped.
+- **&& and ; splitting**: Commands chained with `&&` or `;` are split (via shlex, respects quoting) and each sub-command resolved independently. Pipes, backticks, `$(`, `>(`, `<(` are rejected.
+- **resolvedCanonicals baked into config**: Hooks don't read settings.json at runtime. CLI pre-computes canonical commands and writes them into permission-config.json.
+- **Plugin-only deployment**: Hooks are registered via plugin install (`hooks.json`). CLI only generates `permission-config.json`, no file copying or settings.json registration.
 - **Zero external deps**: CLI uses only Python stdlib. No pip dependencies.
 - **Atomic writes**: All config/lock file writes use temp-file-then-rename pattern.
-- **Idempotent setup**: Running `setup` multiple times is safe -- detects existing registrations, skips unchanged files.
-- **JSON-safe audit logging**: `log_event.py` uses `json.dumps()` instead of shell `printf` to handle special characters in commands.
 - **Data-driven config**: Default domains (`known_domains.json`) and alias mappings (`known_aliases.json`) are data files, not hardcoded.
 
 ## Data Flow
 
-### Bash Hook Pipeline (bash-gate.sh)
+### Bash Hook Pipeline (resolve.py)
 
 ```
 User runs command
-  -> bash-gate.sh reads stdin JSON {"tool_input": {"command": "..."}}
-  -> Step 1: REJECT metacharacters (pipes, &&, ||, ;, $(), etc.)
-  -> Step 2: NORMALIZE binary via normalize-bash-cmd.py
-             (handles env/timeout wrappers, extracts binary name)
-  -> Step 3: ALIAS LOOKUP in permission-config.json, then lock file
-             (python3.13 -> python)
-  -> Step 4: COMMAND MAPPING in permission-config.json, then lock file
-             (npx jest -> npm test)
-  -> Check canonical against settings.json allow list
-  -> Output {"decision":"allow"} or exit silently
-  -> Append to hook.jsonl via log_event.py (subshell, non-blocking)
+  → bash-gate.sh reads stdin, forwards to resolve.py
+  → resolve.py loads permission-config.json (first-run: copy defaults + scan settings.json)
+  → REJECT dangerous metacharacters (|, backticks, $(), >(), <()
+  → SPLIT on && and ; via shlex tokenizer (cap 5 sub-commands)
+  → For each sub-command:
+      1. NORMALIZE binary (shlex, strip path, unwrap env/timeout)
+      2. DIRECT CANONICAL check (binary in resolvedCanonicals?)
+      3. ALIAS LOOKUP in bashAliases (python3.13 → python)
+      4. COMMAND MAPPING longest-prefix match (npx jest → npm test)
+      5. Check resolved canonical against resolvedCanonicals
+  → ALL sub-commands must resolve → {"decision":"allow"}
+  → Any failure → silent exit (passthrough)
+  → Append to hook.jsonl (audit log)
 ```
 
-### WebFetch Hook Pipeline (approve-webfetch-domains.sh)
+### WebFetch Hook Pipeline (resolve_webfetch.py)
 
 ```
 WebFetch call
-  -> Read stdin JSON {"tool_input": {"url": "..."}}
-  -> Extract hostname via parse-url-host.py
-  -> Build domain list: sandbox.network.allowedDomains
-                       + webfetch.extraDomains (config)
-                       + merged.webfetch.extraDomains (lock file)
-  -> Match: exact ("github.com") or wildcard ("*.docs.rs")
-  -> Output {"decision":"allow"} or exit silently
+  → approve-webfetch-domains.sh reads stdin, forwards to resolve_webfetch.py
+  → Parse hostname via urllib.parse (reject IPs, fail closed)
+  → Check against webfetch.extraDomains in permission-config.json
+  → Match: exact ("github.com") or wildcard ("*.docs.rs")
+  → Output {"decision":"allow"} or exit silently
+  → Append to hook.jsonl
 ```
+
+### Config Generation (CLI → Hooks)
+
+```
+user_config (lockfile)          profile rules (lockfile merged)
+       \                              /
+        → lockfile.write_permission_config() →
+                  permission-config.json
+                  (bashAliases + commandMappings + webfetch.extraDomains
+                   + resolvedCanonicals)
+```
+
+User aliases take priority over profile aliases on key conflict.
 
 ## Module Reference
 
@@ -78,89 +92,76 @@ WebFetch call
 | Module | Responsibility |
 |--------|---------------|
 | `cli.py` | Argument parsing, command dispatch, output formatting |
-| `setup_cmd.py` | First-time onboarding: prereq checks, config generation, hook file copying, settings.json registration, interactive flow, uninstall |
-| `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run |
-| `lockfile.py` | Lock file read/write, profile merging (domain union, alias merge, mapping merge) |
+| `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate permission-config.json with resolvedCanonicals, save user_config to lockfile |
+| `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run. Regenerates permission-config.json after mutations |
+| `lockfile.py` | Lock file read/write, profile merging, user_config storage, `write_permission_config()` for generating the merged output |
 | `schema.py` | Profile validation with hard caps (50 aliases, 30 mappings, 50 domains) |
 | `fetch.py` | Profile fetching from `github:user/repo` or `local:path` sources |
-| `conflicts.py` | Conflict detection: alias conflicts (same key, different canonical), mapping conflicts (same alias, different canonical) |
-| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, confidence labels, apply suggestions |
-| `tighten.py` | Audit-based decay analysis: stale rule detection, family context, profile suppression via overrides |
-| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, `parse_rule()` for structured rule parsing |
-| `known_aliases.json` | Curated alias table: python -> [python3, python3.10-3.14], cargo -> [cargo-clippy, cargo-fmt, cargo-watch], etc. |
+| `conflicts.py` | Conflict detection: alias conflicts (same key, different canonical), mapping conflicts |
+| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, confidence labels, apply to lockfile user_config |
+| `tighten.py` | Audit-based decay analysis: stale rule detection, family context, remove from lockfile user_config or suppress via overrides |
+| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, log rotation |
+| `known_aliases.json` | Curated alias table: python → [python3, python3.10-3.14], cargo → [cargo-clippy, cargo-fmt, cargo-watch], etc. |
 | `known_domains.json` | Default documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
 
-### Hook Scripts (plugins/permission-hooks/hooks/)
+### Plugin Scripts (plugins/clean-line/scripts/)
 
-| Script | Called by | Input | Output |
-|--------|-----------|-------|--------|
-| `bash-gate.sh` | PreToolUse(Bash) | stdin JSON | `{"decision":"allow"}` or silent exit |
-| `approve-webfetch-domains.sh` | PreToolUse(WebFetch) | stdin JSON | `{"decision":"allow"}` or silent exit |
-| `normalize-bash-cmd.py` | bash-gate.sh | argv[1]: command string | stdout: binary name |
-| `match-command-equiv.py` | bash-gate.sh | argv[1]: command, argv[2]: config path, argv[3]?: root key | stdout: canonical command |
-| `parse-url-host.py` | approve-webfetch-domains.sh | argv[1]: URL | stdout: lowercase hostname |
-| `bash_utils.py` | imported by normalize + match | - | metacharacter detection, command unwrapping |
-| `log_event.py` | bash-gate.sh, approve-webfetch-domains.sh | argv[1-4]: tool, input, decision, rule | appends JSONL to hook.jsonl |
+| Script | Purpose |
+|--------|---------|
+| `bash-gate.sh` | Thin 5-line dispatcher: reads stdin, forwards to resolve.py |
+| `resolve.py` | Single Python entry point for Bash hooks. All resolution logic in one process |
+| `approve-webfetch-domains.sh` | Thin dispatcher: reads stdin, forwards to resolve_webfetch.py |
+| `resolve_webfetch.py` | Single Python entry point for WebFetch hooks |
+| `default-config.json` | Static defaults (common aliases, domains). Copied on first run |
 
 ### Config Files
 
 | File | Location | Written by | Read by |
 |------|----------|-----------|---------|
-| `permission-config.json` | `~/.claude/hooks/` | `setup` command | Both hooks |
-| `profiles.lock.json` | `~/.claude/hooks/` | `init/update/remove` commands | Both hooks (merged section only) |
-| `hook.jsonl` | `~/.claude/hooks/` | log_event.py (via both hooks) | `status/suggest` commands |
-| `settings.json` | `~/.claude/` | `setup --[un]install` (hook registration) | Hooks (allow list check) |
+| `permission-config.json` | `~/.claude/hooks/` | CLI (`setup`, `write_permission_config`) | Both hooks |
+| `profiles.lock.json` | `~/.claude/hooks/` | CLI (all mutation commands) | CLI only |
+| `hook.jsonl` | `~/.claude/hooks/` | resolve.py / resolve_webfetch.py | CLI (`status/suggest/tighten`) |
 
 ## Setup Flow
 
-`setup` is the first command a user runs. It orchestrates:
+`setup` generates the permission-config.json. Plugin installation is separate (`/plugin install`).
 
-1. **Prerequisites** -- Check jq, python3 >= 3.10, settings.json exist
-2. **Scan allow list** -- Parse `Bash(python *)` entries from settings.json
-3. **Generate config** -- Cross-reference canonicals against known_aliases.json
-4. **Interactive summary** -- Show what will happen, prompt `[Y/n]`
-5. **Copy hooks** -- 7 files to `~/.claude/hooks/` (MD5 skip if unchanged)
-6. **Register hooks** -- Add PreToolUse entries to settings.json (backup first)
-7. **Write config** -- permission-config.json with aliases + default domains from known_domains.json
+1. **Prerequisites** — Check python3 >= 3.10
+2. **Scan allow list** — Parse `Bash(python *)` entries from `~/.claude/settings.json`
+3. **Generate config** — Cross-reference canonicals against known_aliases.json, include resolvedCanonicals
+4. **Interactive summary** — Show what will happen, prompt `[Y/n]`
+5. **Write config** — permission-config.json to `~/.claude/hooks/`
+6. **Save user_config** — Write to lockfile for future mutations by suggest/tighten
 
-Flags: `--yes` (skip confirmation), `--dry-run` (preview only), `--uninstall` (reverse all)
-
-Hook identification: by command path (`~/.claude/hooks/bash-gate.sh`). No custom fields in settings.json.
-
-Hook source discovery: `find_hook_source_dir()` walks up from the package to find `plugins/permission-hooks/hooks/`. Only works from repo checkout / editable install.
+Flags: `--yes` (skip confirmation), `--dry-run` (preview only)
 
 ## Profile System
 
 ```
 Profile A: python aliases          \
-Profile B: rust commands            }-> Merge into "merged" section
-User Config: custom domains        /
+Profile B: rust commands            }→ Merge into "merged" section
+User Config: custom aliases/domains /
                                     |
                                     v
 Lock File (profiles.lock.json):
-  profiles: []            <- immutable source records
-  merged: {}              <- what hooks actually read
+  profiles: []            ← immutable source records
+  merged: {}              ← merged profile rules
+  user_config: {}         ← user's aliases, domains, mappings
+  user_overrides: {}      ← suppressed profile rules
+                                    |
+                                    v (write_permission_config)
+  permission-config.json  ← what hooks actually read
 ```
 
 Merge rules:
-- **Domains**: Set union, order preserved, deduplicated
-- **Aliases**: Dict merge, last profile wins on key conflict
+- **Domains**: Set union, deduplicated
+- **Aliases**: Dict merge. User aliases override profile aliases on conflict
 - **Mappings**: Per-canonical alias list union
-
-Conflicts are detected at install time but are warnings, not blockers.
+- **resolvedCanonicals**: Computed from settings.json at config generation time
 
 ### User Overrides
 
 Users can suppress individual profile rules without removing the entire profile.
-The mental model is git: profile = upstream, overrides = local commits.
-
-```
-Lock File (profiles.lock.json):
-  profiles: []              <- immutable source records
-  merged: {}                <- what hooks read (post-override)
-  user_overrides:
-    removed_rules: []       <- suppressed profile rules
-```
 
 `rebuild_merged()` applies overrides automatically after merging profiles.
 `cleanline update` detects convergence: if an author removes a rule the user
@@ -169,12 +170,11 @@ already suppressed, the override is auto-cleaned (redundancy detection).
 ## Development Commands
 
 ```bash
-uv run pytest tests/ -v              # Run all tests (160 tests)
+uv run python -m pytest tests/ -v   # Run all tests (200+ tests)
 cleanline --help                     # CLI help
 cleanline setup --dry-run            # Preview setup without writing
-cleanline setup --yes                # Full install, no prompts
-cleanline setup --uninstall          # Remove hooks
-cleanline status                     # View profiles + hook health
+cleanline setup --yes                # Full setup, no prompts
+cleanline status                     # View profiles + audit summary
 cleanline suggest --apply            # Apply suggestions interactively
 cleanline tighten                    # Analyze stale rules
 cleanline tighten --apply            # Remove/suppress stale rules
@@ -182,35 +182,29 @@ cleanline tighten --apply            # Remove/suppress stale rules
 
 ## When Making Changes
 
-### Modifying hooks (bash/python)
-- Test with `test_hooks_integration.py` -- runs actual hooks with crafted stdin
-- Audit logging goes through `log_event.py` -- uses `json.dumps()` for proper escaping
-- Always maintain fail-closed behavior
-- `$HOOK_DIR` is resolved at runtime -- all helpers must be in the same directory
+### Modifying hooks (resolve.py / resolve_webfetch.py)
+- Test with `test_hooks_integration.py` — runs actual shell dispatchers with crafted stdin
+- Test internals with `test_resolve.py` — unit tests for all resolution functions
+- Always maintain fail-closed behavior (silent exit on any error)
+- All helpers live in the same script — no subprocess calls within resolve.py
 
 ### Modifying CLI modules
 - Each module has a corresponding `tests/test_<module>.py`
-- Profile operations use `tmp_path` fixtures -- never write to real `~/.claude/`
+- Profile operations use `tmp_path` fixtures — never write to real `~/.claude/`
 - Mock `find_settings_path()` in tests that would touch real settings.json
-- Mock `lockfile.get_lockfile_path()` in profile operation tests
+- Mock `lockfile.get_lockfile_path()` in tests that write to lockfile
+- After any lockfile mutation, call `write_permission_config()` to regenerate
 
 ### Modifying setup_cmd.py
-- `run_setup()` has an `interactive` flag -- set to `False` in tests
-- `register_hooks()` is idempotent but creates a backup -- tests should use tmp_path
-- Tests that call `run_setup` without mocking `find_settings_path` will try to modify real settings
+- `run_setup()` has an `interactive` flag — set to `False` in tests
+- Tests that call `run_setup` must mock both `find_settings_path` and `get_lockfile_path`
 
 ### Adding new config keys
-- Add to `permission-config.json` default template
-- Add to `lockfile.merge_profiles()` merge logic
+- Add to `default-config.json` (plugin defaults)
+- Add to `lockfile.write_permission_config()` merge logic
+- Add to `lockfile.merge_profiles()` if profiles can contribute
 - Update `schema.validate_profile()` with caps and validation
-- Add conflict detection in `conflicts.py` if the key allows conflicts
-- Update both hooks to read the new key
-
-### Adding new hook scripts
-- Add filename to `HOOK_FILES` list in `setup_cmd.py`
-- Add registration entry to `HOOK_ENTRIES` in `setup_cmd.py`
-- Add `_is_our_hook()` detection pattern if the new hook has a unique path
-- Add integration test in `test_hooks_integration.py`
+- Update resolve.py / resolve_webfetch.py to read the new key
 
 ### Adding new data files
 - Place in `src/cleanline/` alongside `known_aliases.json` and `known_domains.json`
@@ -221,14 +215,14 @@ cleanline tighten --apply            # Remove/suppress stale rules
 
 | Module | Test File | Key tests |
 |--------|-----------|-----------|
-| setup_cmd | test_setup.py | Prereqs, copy (with MD5 skip), register (idempotent), unregister, health check, full flow, idempotent second run |
-| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, override CRUD, apply_overrides, redundancy detection |
+| resolve.py | test_resolve.py | Metacharacter detection, chain splitting, binary normalization, alias/mapping/direct-canonical resolution, no-chaining invariant, audit logging, first-run config, hostname parsing, domain matching |
+| hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors |
+| setup_cmd | test_setup.py | Canonicals extraction, alias generation, config with resolvedCanonicals, full flow, user_config to lockfile |
+| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config |
 | schema | test_schema.py | Validation caps, warn thresholds, type checking |
-| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule (all 5 types + rsplit + unknown) |
+| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule |
 | fetch | test_fetch.py | GitHub URL parsing, local fetch, error handling |
 | conflicts | test_conflicts.py | Alias conflicts, mapping conflicts, no-conflict dedup |
-| suggest | test_suggest.py | Version grouping (regex + known_aliases), domain grouping, confidence labels, sorting, min_count, apply suggestions (add/cancel/dedup) |
-| tighten | test_tighten.py | Usage map, stale detection (user + profile), timestamp logic, insufficient data, family context, apply user/profile, CLI gate (--force) |
-| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, update reconciliation (redundant/valid overrides) |
-| bash_utils | test_bash_utils.py | normalize-bash-cmd.py and match-command-equiv.py subprocess tests |
-| hooks | test_hooks_integration.py | Full hook execution, audit log JSON escaping, no-chaining transitive aliases |
+| suggest | test_suggest.py | Version grouping, domain grouping, confidence labels, sorting, min_count, apply to lockfile user_config |
+| tighten | test_tighten.py | Usage map, stale detection, family context, apply user/profile via lockfile, CLI gate (--force) |
+| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, override reconciliation |

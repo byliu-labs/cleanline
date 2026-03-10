@@ -3,15 +3,19 @@
 The lock file lives at ~/.claude/hooks/profiles.lock.json and contains:
   - "profiles": list of installed profiles with metadata
   - "merged": unified view of all profile rules (what hooks actually read)
+  - "user_config": user's own aliases/domains/mappings (set by setup, suggest, tighten)
 
-Hooks only read "merged". The CLI manages everything.
+Hooks read only permission-config.json. The CLI manages lockfile + regenerates
+permission-config.json from user_config + merged + resolvedCanonicals.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 DEFAULT_LOCKFILE = Path.home() / ".claude" / "hooks" / "profiles.lock.json"
+BASH_ALLOW_PATTERN = re.compile(r"^Bash\((\S+?)(?:\s+\*)?\)$")
 
 
 def get_lockfile_path() -> Path:
@@ -224,3 +228,95 @@ def remove_profile(lockfile_data: dict, name: str) -> dict:
         if p.get("name") != name
     ]
     return rebuild_merged(lockfile_data)
+
+
+# ============================================================================
+# PERMISSION CONFIG GENERATION
+# ============================================================================
+
+
+def _extract_canonicals_from_settings(settings_path: Path) -> list[str]:
+    """Read settings.json and extract canonical command names from allow list."""
+    try:
+        with open(settings_path) as f:
+            settings = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        return []
+
+    canonicals = set()
+    for entry in settings.get("permissions", {}).get("allow", []):
+        m = BASH_ALLOW_PATTERN.match(entry)
+        if m:
+            canonicals.add(m.group(1))
+    return sorted(canonicals)
+
+
+def write_permission_config(
+    config_path: Path,
+    lockfile_data: dict,
+    settings_path: Path | None = None,
+) -> None:
+    """Merge user_config + profile rules + resolvedCanonicals into permission-config.json.
+
+    The merge flow:
+    1. Start with user_config from lockfile
+    2. Merge profile rules (from merged section) on top
+    3. Compute resolvedCanonicals from settings.json
+    4. Write to permission-config.json
+    """
+    user_config = lockfile_data.get("user_config", {})
+    merged = lockfile_data.get("merged", {})
+
+    # Start with user config as base
+    config: dict = {}
+
+    # Merge aliases: user first, then profiles on top (profiles extend, don't override)
+    combined_aliases = dict(user_config.get("bashAliases", {}))
+    for key, val in merged.get("bashAliases", {}).items():
+        if key not in combined_aliases:
+            combined_aliases[key] = val
+    if combined_aliases:
+        config["bashAliases"] = combined_aliases
+
+    # Merge mappings: union alias lists per canonical
+    combined_mappings: dict[str, list[str]] = {}
+    for source in [user_config, merged]:
+        for canonical, aliases in source.get("commandMappings", {}).items():
+            if not isinstance(aliases, list):
+                continue
+            if canonical not in combined_mappings:
+                combined_mappings[canonical] = []
+            existing = set(combined_mappings[canonical])
+            for alias in aliases:
+                if alias not in existing:
+                    combined_mappings[canonical].append(alias)
+                    existing.add(alias)
+    if combined_mappings:
+        config["commandMappings"] = combined_mappings
+
+    # Merge domains: set union, order preserved
+    combined_domains: list[str] = []
+    seen_domains: set[str] = set()
+    for source in [user_config, merged]:
+        for domain in source.get("webfetch", {}).get("extraDomains", []):
+            if domain not in seen_domains:
+                seen_domains.add(domain)
+                combined_domains.append(domain)
+    if combined_domains:
+        config["webfetch"] = {"extraDomains": combined_domains}
+
+    # Compute resolvedCanonicals from settings.json
+    if settings_path is None:
+        settings_path = Path.home() / ".claude" / "settings.json"
+    if settings_path.exists():
+        config["resolvedCanonicals"] = _extract_canonicals_from_settings(settings_path)
+    else:
+        config["resolvedCanonicals"] = []
+
+    # Write atomically
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = config_path.with_suffix(".tmp")
+    with open(tmp, "w") as f:
+        json.dump(config, f, indent=2)
+        f.write("\n")
+    tmp.rename(config_path)

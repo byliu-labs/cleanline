@@ -199,8 +199,17 @@ def test_cmd_suggest_shows_prompts_saved(capsys: object) -> None:
 
 
 def test_apply_suggestions_adds_aliases(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({"bashAliases": {}, "webfetch": {"extraDomains": []}}))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    # Set up lockfile with user_config
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"bashAliases": {}, "webfetch": {"extraDomains": []}},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     suggestions = {
         "command_groups": [
@@ -209,20 +218,32 @@ def test_apply_suggestions_adds_aliases(tmp_path: Path) -> None:
         "domain_groups": [],
     }
 
-    with patch("builtins.input", return_value="y"):
+    with (
+        patch("builtins.input", return_value="y"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
         result = apply_suggestions(suggestions, config_path)
 
     assert not result["cancelled"]
     assert any("aliases" in a for a in result["actions"])
 
-    config = json.loads(config_path.read_text())
-    assert config["bashAliases"]["python3.12"] == "python"
-    assert config["bashAliases"]["python3.13"] == "python"
+    # Check lockfile user_config was updated
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert data["user_config"]["bashAliases"]["python3.12"] == "python"
+    assert data["user_config"]["bashAliases"]["python3.13"] == "python"
 
 
 def test_apply_suggestions_adds_domains(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({"webfetch": {"extraDomains": []}}))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"webfetch": {"extraDomains": []}},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     suggestions = {
         "command_groups": [],
@@ -231,17 +252,23 @@ def test_apply_suggestions_adds_domains(tmp_path: Path) -> None:
         ],
     }
 
-    with patch("builtins.input", return_value="y"):
+    with (
+        patch("builtins.input", return_value="y"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
         result = apply_suggestions(suggestions, config_path)
 
     assert not result["cancelled"]
-    config = json.loads(config_path.read_text())
-    assert "*.foo.com" in config["webfetch"]["extraDomains"]
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "*.foo.com" in data["user_config"]["webfetch"]["extraDomains"]
 
 
 def test_apply_suggestions_cancelled(tmp_path: Path) -> None:
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text("{}")
+    lockfile_path = tmp_path / "profiles.lock.json"
+    lockfile_mod.write_lockfile({"profiles": [], "merged": {}}, lockfile_path)
 
     suggestions = {
         "command_groups": [
@@ -250,19 +277,30 @@ def test_apply_suggestions_cancelled(tmp_path: Path) -> None:
         "domain_groups": [],
     }
 
-    with patch("builtins.input", return_value="n"):
+    with (
+        patch("builtins.input", return_value="n"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
         result = apply_suggestions(suggestions, config_path)
 
     assert result["cancelled"]
 
 
 def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:
-    """Should not add aliases that already exist."""
+    """Should not add aliases that already exist in user_config."""
+    from cleanline import lockfile as lockfile_mod
+
     config_path = tmp_path / "permission-config.json"
-    config_path.write_text(json.dumps({
-        "bashAliases": {"python3.12": "python"},
-        "webfetch": {"extraDomains": ["*.foo.com"]},
-    }))
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {
+            "bashAliases": {"python3.12": "python"},
+            "webfetch": {"extraDomains": ["*.foo.com"]},
+        },
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     suggestions = {
         "command_groups": [
@@ -273,31 +311,15 @@ def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:
         ],
     }
 
-    with patch("builtins.input", return_value="y"):
+    with (
+        patch("builtins.input", return_value="y"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
         result = apply_suggestions(suggestions, config_path)
 
-    config = json.loads(config_path.read_text())
+    data = lockfile_mod.read_lockfile(lockfile_path)
     # python3.12 was already there, only python3.13 should be added
-    assert config["bashAliases"]["python3.12"] == "python"
-    assert config["bashAliases"]["python3.13"] == "python"
+    assert data["user_config"]["bashAliases"]["python3.12"] == "python"
+    assert data["user_config"]["bashAliases"]["python3.13"] == "python"
     # *.foo.com was already there, count should be 1
-    assert config["webfetch"]["extraDomains"].count("*.foo.com") == 1
-
-
-def test_apply_suggestions_creates_config(tmp_path: Path) -> None:
-    """Should create config file if it doesn't exist."""
-    config_path = tmp_path / "permission-config.json"
-
-    suggestions = {
-        "command_groups": [
-            {"canonical": "node", "variants": [("node18", 3), ("node20", 2)], "total": 5}
-        ],
-        "domain_groups": [],
-    }
-
-    with patch("builtins.input", return_value="y"):
-        result = apply_suggestions(suggestions, config_path)
-
-    assert config_path.exists()
-    config = json.loads(config_path.read_text())
-    assert config["bashAliases"]["node18"] == "node"
+    assert data["user_config"]["webfetch"]["extraDomains"].count("*.foo.com") == 1
