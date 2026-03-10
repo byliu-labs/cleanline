@@ -84,8 +84,9 @@ WebFetch call
 | `schema.py` | Profile validation with hard caps (50 aliases, 30 mappings, 50 domains) |
 | `fetch.py` | Profile fetching from `github:user/repo` or `local:path` sources |
 | `conflicts.py` | Conflict detection: alias conflicts (same key, different canonical), mapping conflicts (same alias, different canonical) |
-| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, apply suggestions |
-| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment |
+| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, confidence labels, apply suggestions |
+| `tighten.py` | Audit-based decay analysis: stale rule detection, family context, profile suppression via overrides |
+| `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, `parse_rule()` for structured rule parsing |
 | `known_aliases.json` | Curated alias table: python -> [python3, python3.10-3.14], cargo -> [cargo-clippy, cargo-fmt, cargo-watch], etc. |
 | `known_domains.json` | Default documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
 
@@ -148,16 +149,35 @@ Merge rules:
 
 Conflicts are detected at install time but are warnings, not blockers.
 
+### User Overrides
+
+Users can suppress individual profile rules without removing the entire profile.
+The mental model is git: profile = upstream, overrides = local commits.
+
+```
+Lock File (profiles.lock.json):
+  profiles: []              <- immutable source records
+  merged: {}                <- what hooks read (post-override)
+  user_overrides:
+    removed_rules: []       <- suppressed profile rules
+```
+
+`rebuild_merged()` applies overrides automatically after merging profiles.
+`cleanline update` detects convergence: if an author removes a rule the user
+already suppressed, the override is auto-cleaned (redundancy detection).
+
 ## Development Commands
 
 ```bash
-uv run pytest tests/ -v              # Run all tests (111 tests)
+uv run pytest tests/ -v              # Run all tests (160 tests)
 cleanline --help                     # CLI help
 cleanline setup --dry-run            # Preview setup without writing
 cleanline setup --yes                # Full install, no prompts
 cleanline setup --uninstall          # Remove hooks
 cleanline status                     # View profiles + hook health
 cleanline suggest --apply            # Apply suggestions interactively
+cleanline tighten                    # Analyze stale rules
+cleanline tighten --apply            # Remove/suppress stale rules
 ```
 
 ## When Making Changes
@@ -202,12 +222,13 @@ cleanline suggest --apply            # Apply suggestions interactively
 | Module | Test File | Key tests |
 |--------|-----------|-----------|
 | setup_cmd | test_setup.py | Prereqs, copy (with MD5 skip), register (idempotent), unregister, health check, full flow, idempotent second run |
-| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles |
+| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, override CRUD, apply_overrides, redundancy detection |
 | schema | test_schema.py | Validation caps, warn thresholds, type checking |
-| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment |
+| audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule (all 5 types + rsplit + unknown) |
 | fetch | test_fetch.py | GitHub URL parsing, local fetch, error handling |
 | conflicts | test_conflicts.py | Alias conflicts, mapping conflicts, no-conflict dedup |
-| suggest | test_suggest.py | Version grouping (regex + known_aliases), domain grouping, apply suggestions (add/cancel/dedup) |
-| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run |
+| suggest | test_suggest.py | Version grouping (regex + known_aliases), domain grouping, confidence labels, sorting, min_count, apply suggestions (add/cancel/dedup) |
+| tighten | test_tighten.py | Usage map, stale detection (user + profile), timestamp logic, insufficient data, family context, apply user/profile, CLI gate (--force) |
+| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, update reconciliation (redundant/valid overrides) |
 | bash_utils | test_bash_utils.py | normalize-bash-cmd.py and match-command-equiv.py subprocess tests |
 | hooks | test_hooks_integration.py | Full hook execution, audit log JSON escaping, no-chaining transitive aliases |

@@ -7,6 +7,7 @@ Commands:
   init <source>      Add a profile (github:user/repo or local path)
   status             Show installed profiles and audit summary
   suggest            Propose config changes from audit data
+  tighten            Identify and remove stale permission rules
   update [name]      Re-fetch and update profiles
   remove <name>      Remove a profile
   dry-run <source>   Show what a profile would change without applying
@@ -22,6 +23,8 @@ from . import profile_ops
 from . import setup_cmd
 from . import suggest as suggest_mod
 from . import audit as audit_mod
+from . import tighten as tighten_mod
+from . import lockfile as lockfile_mod
 
 
 def _print_json(data: dict) -> None:
@@ -162,7 +165,8 @@ def cmd_suggest(args: argparse.Namespace) -> int:
         print("No audit data found. Run Claude Code with hooks enabled to generate data.")
         return 0
 
-    suggestions = suggest_mod.generate_suggestions(events)
+    min_count = getattr(args, "min_count", suggest_mod.MIN_SUGGEST_COUNT)
+    suggestions = suggest_mod.generate_suggestions(events, min_count=min_count)
 
     # Headline stats
     summary = audit_mod.summarize_decisions(events)
@@ -180,14 +184,18 @@ def cmd_suggest(args: argparse.Namespace) -> int:
     if cmd_groups:
         print(f"\nCommand aliases to add:")
         for group in cmd_groups:
-            print(f"  {group['canonical']}:  ({group['total']} prompts saved)")
+            conf = group.get("confidence", "")
+            conf_label = f", {conf} confidence" if conf else ""
+            print(f"  {group['canonical']}:  ({group['total']} prompts saved{conf_label})")
             for variant, count in group["variants"]:
                 print(f"    {variant} -> {group['canonical']}  ({count}x)")
 
     if domain_groups:
         print(f"\nDomain patterns to add:")
         for group in domain_groups:
-            print(f"  {group['pattern']}:  ({group['total']} prompts saved)")
+            conf = group.get("confidence", "")
+            conf_label = f", {conf} confidence" if conf else ""
+            print(f"  {group['pattern']}:  ({group['total']} prompts saved{conf_label})")
             for sub, count in group["subdomains"]:
                 print(f"    {sub}  ({count}x)")
 
@@ -229,6 +237,125 @@ def _apply_suggestions(suggestions: dict) -> int:
     print()
     for action in result.get("actions", []):
         print(f"  + {action}")
+    return 0
+
+
+def cmd_tighten(args: argparse.Namespace) -> int:
+    """Identify and remove stale permission rules."""
+    events = audit_mod.read_audit_log()
+    if not events:
+        print("No audit data found. Run Claude Code with hooks enabled to generate data.")
+        return 0
+
+    config_dir = _default_hooks_dir()
+    config_path = config_dir / "permission-config.json"
+
+    config: dict = {}
+    if config_path.exists():
+        try:
+            config = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    lockfile_path = lockfile_mod.get_lockfile_path()
+    lockfile_data = lockfile_mod.read_lockfile(lockfile_path)
+
+    stale = tighten_mod.find_stale_rules(events, config, lockfile_data, args.days)
+
+    # Print analysis
+    span = stale["audit_span_days"]
+    print(f"\nAnalyzing {span} days of audit data ({len(events)} events)...")
+
+    if stale["insufficient_data"]:
+        print(f"\nWarning: only {span} days of data. Results may not be reliable.")
+
+    # User-config candidates
+    user = stale["user_stale"]
+    user_count = sum(len(v) for v in user.values())
+    if user_count:
+        print("\nCandidates from your config (removable):")
+        for entry in user["aliases"]:
+            note = f"  ({entry['family_note']})" if entry.get("family_note") else ""
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['key']} -> {entry['canonical']:<16} {last}{note}")
+        for entry in user["domains"]:
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['pattern']:<32} {last}")
+        for entry in user["mappings"]:
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['canonical']:<32} {last}")
+
+    # Profile candidates
+    profile = stale["profile_stale"]
+    profile_count = sum(len(v) for v in profile.values())
+    if profile_count:
+        print("\nCandidates from profiles (suppressible):")
+        for entry in profile["aliases"]:
+            note = f"  ({entry['family_note']})" if entry.get("family_note") else ""
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['key']} -> {entry['canonical']:<16} {last}  (from: {entry['profile']}){note}")
+        for entry in profile["domains"]:
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['pattern']:<32} {last}  (from: {entry['profile']})")
+        for entry in profile["mappings"]:
+            last = entry["last_used"] or "never triggered"
+            if entry["last_used"]:
+                last = f"last used {entry['last_used'][:10]}"
+            print(f"  {entry['canonical']:<32} {last}  (from: {entry['profile']})")
+        print("\n  Profile rules aren't deleted -- they're suppressed via override.")
+        print("  Suppressed rules persist across profile updates.")
+
+    counts = stale["active_counts"]
+    print(f"\nActive rules: {counts['aliases']} aliases, "
+          f"{counts['mappings']} mappings, {counts['domains']} domains")
+    print(f"Candidates: {user_count} user, {profile_count} profile")
+
+    if not user_count and not profile_count:
+        print("\nNo stale rules found. Your config is lean.")
+        return 0
+
+    # --apply logic
+    if args.apply:
+        if stale["insufficient_data"] and not args.force:
+            print(f"\nRefused: only {span} days of audit data (minimum 7).")
+            print("Use 'cleanline tighten --apply --force' to override.")
+            return 1
+
+        try:
+            answer = input("\nReview each candidate? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return 0
+
+        if answer not in ("", "y", "yes"):
+            print("Cancelled.")
+            return 0
+
+        if user_count:
+            removals = tighten_mod.select_rules_to_remove(stale)
+            user_result = tighten_mod.apply_tighten_user(removals, config_path)
+            for action in user_result["actions"]:
+                print(f"  + {action}")
+
+        if profile_count:
+            suppressions = tighten_mod.select_rules_to_remove(stale)
+            profile_result = tighten_mod.apply_tighten_profile(suppressions, lockfile_path)
+            for action in profile_result["actions"]:
+                print(f"  + {action}")
+    else:
+        if user_count or profile_count:
+            print("\nRun 'cleanline tighten --apply' to review each candidate.")
+
     return 0
 
 
@@ -281,6 +408,18 @@ def build_parser() -> argparse.ArgumentParser:
     # suggest
     p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
     p_suggest.add_argument("--apply", action="store_true", help="Apply suggested changes interactively")
+    p_suggest.add_argument("--min-count", type=int, default=suggest_mod.MIN_SUGGEST_COUNT,
+                           help=f"Minimum passthrough count to suggest (default: {suggest_mod.MIN_SUGGEST_COUNT})")
+
+    # tighten
+    p_tighten = sub.add_parser("tighten",
+                               help="Identify and remove stale permission rules (least privilege)")
+    p_tighten.add_argument("--apply", action="store_true",
+                           help="Remove/suppress stale rules interactively")
+    p_tighten.add_argument("--days", type=int, default=30,
+                           help="Flag rules unused for N days (default: 30)")
+    p_tighten.add_argument("--force", action="store_true",
+                           help="Allow --apply even with insufficient audit data")
 
     # update
     p_update = sub.add_parser("update", help="Re-fetch and update profiles")
@@ -311,6 +450,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init,
         "status": cmd_status,
         "suggest": cmd_suggest,
+        "tighten": cmd_tighten,
         "update": cmd_update,
         "remove": cmd_remove,
         "dry-run": cmd_dry_run,

@@ -4,6 +4,7 @@ from pathlib import Path
 
 from cleanline.audit import (
     enrich_with_provenance,
+    parse_rule,
     read_audit_log,
     summarize_decisions,
     top_rules,
@@ -86,6 +87,47 @@ def test_enrich_with_provenance() -> None:
     assert enriched[0]["source_profile"] == "rust-profile"
     assert enriched[1]["source_profile"] == "js-profile"
     assert enriched[2]["source_profile"] == "user"
+
+
+# ============================================================================
+# PARSE_RULE
+# ============================================================================
+
+
+def test_parse_rule_alias() -> None:
+    result = parse_rule("alias:python3.13->python")
+    assert result == {"type": "alias", "key": "python3.13", "canonical": "python"}
+
+
+def test_parse_rule_alias_rsplit() -> None:
+    """Split on last -> so alias keys containing -> are handled."""
+    result = parse_rule("alias:weird->key->python")
+    assert result == {"type": "alias", "key": "weird->key", "canonical": "python"}
+
+
+def test_parse_rule_mapping() -> None:
+    result = parse_rule("mapping:npm test")
+    assert result == {"type": "mapping", "canonical": "npm test"}
+
+
+def test_parse_rule_domain() -> None:
+    result = parse_rule("domain:*.docs.rs")
+    assert result == {"type": "domain", "pattern": "*.docs.rs"}
+
+
+def test_parse_rule_no_match() -> None:
+    result = parse_rule("no_match")
+    assert result == {"type": "no_match"}
+
+
+def test_parse_rule_metacharacter() -> None:
+    result = parse_rule("metacharacter")
+    assert result == {"type": "metacharacter"}
+
+
+def test_parse_rule_unknown() -> None:
+    result = parse_rule("something_else")
+    assert result == {"type": "unknown", "raw": "something_else"}
 
 
 def test_read_audit_log_with_bad_lines(tmp_path: Path) -> None:

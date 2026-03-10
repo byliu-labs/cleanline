@@ -11,6 +11,9 @@ from collections import Counter
 from importlib.resources import files as pkg_files
 from pathlib import Path
 
+# Minimum total passthrough count to include in suggestions
+MIN_SUGGEST_COUNT = 3
+
 # Common version suffixes to group (e.g., python3.10, python3.11 → python3.*)
 VERSION_PATTERN = re.compile(r"^(.+?)(\d+(?:\.\d+)*)$")
 
@@ -63,14 +66,27 @@ def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
     }
 
 
-def find_version_groups(commands: list[tuple[str, int]]) -> list[dict]:
+def _confidence_label(total: int) -> str:
+    """Assign confidence label based on total passthrough count."""
+    if total >= 10:
+        return "high"
+    if total >= 5:
+        return "medium"
+    return "low"
+
+
+def find_version_groups(
+    commands: list[tuple[str, int]],
+    min_count: int = MIN_SUGGEST_COUNT,
+) -> list[dict]:
     """Identify commands that are variants of the same canonical tool.
 
     Uses two strategies:
       1. Known aliases lookup (cargo-clippy, cargo-fmt -> cargo)
       2. Version regex fallback (python3.12, python3.13 -> python)
 
-    Groups with 2+ variants are returned as suggestions.
+    Groups with 2+ variants and total >= min_count are returned, sorted
+    by total descending with confidence labels.
     """
     reverse_aliases = _build_reverse_alias_map()
     groups: dict[str, list[tuple[str, int]]] = {}
@@ -93,18 +109,31 @@ def find_version_groups(commands: list[tuple[str, int]]) -> list[dict]:
                 groups[canonical] = []
             groups[canonical].append((cmd, count))
 
-    # Only suggest groups with 2+ variants
-    return [
-        {"canonical": base, "variants": variants, "total": sum(c for _, c in variants)}
-        for base, variants in groups.items()
-        if len(variants) >= 2
-    ]
+    result = []
+    for base, variants in groups.items():
+        total = sum(c for _, c in variants)
+        if len(variants) >= 2 and total >= min_count:
+            result.append({
+                "canonical": base,
+                "variants": variants,
+                "total": total,
+                "confidence": _confidence_label(total),
+            })
+
+    result.sort(key=lambda g: g["total"], reverse=True)
+    return result
 
 
-def find_domain_groups(domains: list[tuple[str, int]]) -> list[dict]:
+def find_domain_groups(
+    domains: list[tuple[str, int]],
+    min_count: int = MIN_SUGGEST_COUNT,
+) -> list[dict]:
     """Group subdomains under common apex domains.
 
     E.g., docs.foo.com (5), api.foo.com (3) → suggest *.foo.com
+
+    Groups with 2+ subdomains and total >= min_count are returned,
+    sorted by total descending with confidence labels.
     """
     # Extract apex (last two parts)
     apex_map: dict[str, list[tuple[str, int]]] = {}
@@ -116,14 +145,25 @@ def find_domain_groups(domains: list[tuple[str, int]]) -> list[dict]:
                 apex_map[apex] = []
             apex_map[apex].append((domain, count))
 
-    return [
-        {"pattern": f"*.{apex}", "subdomains": subs, "total": sum(c for _, c in subs)}
-        for apex, subs in apex_map.items()
-        if len(subs) >= 2
-    ]
+    result = []
+    for apex, subs in apex_map.items():
+        total = sum(c for _, c in subs)
+        if len(subs) >= 2 and total >= min_count:
+            result.append({
+                "pattern": f"*.{apex}",
+                "subdomains": subs,
+                "total": total,
+                "confidence": _confidence_label(total),
+            })
+
+    result.sort(key=lambda g: g["total"], reverse=True)
+    return result
 
 
-def generate_suggestions(events: list[dict]) -> dict:
+def generate_suggestions(
+    events: list[dict],
+    min_count: int = MIN_SUGGEST_COUNT,
+) -> dict:
     """Analyze audit events and generate config suggestions.
 
     Returns:
@@ -137,8 +177,8 @@ def generate_suggestions(events: list[dict]) -> dict:
     grouped = group_passthroughs(events)
 
     return {
-        "command_groups": find_version_groups(grouped["commands"]),
-        "domain_groups": find_domain_groups(grouped["domains"]),
+        "command_groups": find_version_groups(grouped["commands"], min_count=min_count),
+        "domain_groups": find_domain_groups(grouped["domains"], min_count=min_count),
         "top_commands": grouped["commands"][:10],
         "top_domains": grouped["domains"][:10],
     }

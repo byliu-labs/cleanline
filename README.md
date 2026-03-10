@@ -89,9 +89,30 @@ Shows: installed profiles, audit summary (allow/passthrough/deny counts), top au
 ```bash
 cleanline suggest            # Show suggestions
 cleanline suggest --apply    # Apply suggestions interactively
+cleanline suggest --min-count 5  # Only suggest groups with 5+ occurrences
 ```
 
 Analyzes your audit log to find patterns: versioned commands that should be aliased (via regex and curated `known_aliases.json`), domain groups that should be wildcarded. The `--apply` flag lets you accept changes interactively.
+
+Suggestions are ranked by confidence:
+- **high** (10+ occurrences): Strong evidence this rule is needed
+- **medium** (5-9 occurrences): Reasonable evidence
+- **low** (3-4 occurrences): Minimal evidence (default threshold)
+
+Use `--min-count` to adjust the minimum evidence threshold.
+
+### `tighten` -- Remove stale permission rules (least privilege)
+
+```bash
+cleanline tighten              # Analyze and show stale rule candidates
+cleanline tighten --apply      # Remove/suppress stale rules interactively
+cleanline tighten --days 60    # Flag rules unused for 60+ days (default: 30)
+cleanline tighten --apply --force  # Override the minimum data requirement
+```
+
+The complement to `suggest`. Analyzes your audit log to find rules that haven't triggered recently. User-config rules are removed directly; profile rules are suppressed via overrides that persist across profile updates.
+
+Includes a data sufficiency gate: `--apply` requires at least 7 days of audit data unless `--force` is passed. For stale aliases in known families, shows which siblings are still active (e.g., "python3.11, python3.12 are active").
 
 ### `init` -- Add a community profile
 
@@ -125,6 +146,20 @@ cleanline remove rust-profile
 
 Shows impact: which aliases and domains will be removed.
 
+## Security Principles
+
+Clean Line's design follows established security engineering principles:
+
+- **Fail-safe defaults** (Saltzer & Schroeder, 1975): Hooks exit silently on error, deferring to normal permissions. Only explicit matches produce auto-approval. You can never get *less* security than default Claude Code.
+
+- **Attribute-Based Access Control (ABAC)**: Alias and mapping resolution resolves tool calls against a policy of attributes (binary names, command patterns, domain patterns) rather than simple identity checks.
+
+- **Federated policy management**: Community profiles provide shared permission rule sets. Users can override individual profile rules without abandoning the entire profile -- like git's local commits on top of upstream.
+
+- **Least privilege** via `cleanline tighten`: A bidirectional feedback loop. `suggest` adds rules based on observed need; `tighten` prunes stale rules based on observed disuse. Together they converge on the minimum necessary permission set.
+
+- **Defense in depth**: No chaining (single level of indirection) prevents transitive privilege escalation. `mypy3 -> python3 -> python` will NOT chain -- each resolution resolves independently against the allow list.
+
 ## How It Works
 
 ### Hook Resolution Pipeline
@@ -157,7 +192,11 @@ When Claude Code invokes a Bash command, `bash-gate.sh` runs this pipeline:
   No match -> defer to normal permissions
 ```
 
-For WebFetch, `approve-webfetch-domains.sh` extracts the hostname and checks it against sandbox allowed domains + extra domains from config + profile domains. Wildcard patterns like `*.docs.rs` match any subdomain.
+For WebFetch, `approve-webfetch-domains.sh` extracts the hostname and checks it against sandbox allowed domains + extra domains from config + profile domains.
+
+#### Wildcard Semantics
+
+`*.example.com` matches `sub.example.com` and `deep.sub.example.com` but does NOT match `example.com` itself. This follows standard subdomain wildcard conventions.
 
 **No chaining**: Each resolution layer resolves against the allow list independently. Only one level of alias indirection is allowed -- `mypy3 -> python3` will NOT chain through `python3 -> python`.
 
@@ -249,6 +288,14 @@ Multiple profiles merge into a single `profiles.lock.json` that hooks read:
 - **Command mappings**: Alias list union per canonical
 
 Conflicts are detected at install time and reported as warnings.
+
+### Profile Overrides
+
+You can suppress individual profile rules without removing the entire profile. This is useful when a profile is mostly good but includes a few rules you don't need.
+
+`cleanline tighten --apply` automatically creates overrides for stale profile rules. Overrides are stored in `profiles.lock.json` under `user_overrides` and persist across `cleanline update`.
+
+When a profile author removes a rule you've already suppressed, the override is automatically cleaned up during `cleanline update` (convergence detection).
 
 ### Profile Caps
 

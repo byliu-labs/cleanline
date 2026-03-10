@@ -90,3 +90,89 @@ def test_dry_run_local_profile(tmp_path: Path, sample_profile: dict) -> None:
     assert "bashAliases" in result["hypothetical_merged"]
     # Lock file should NOT be created
     assert not lockfile_path.exists()
+
+
+# ============================================================================
+# UPDATE RECONCILIATION
+# ============================================================================
+
+
+def test_update_reconciles_redundant_overrides(tmp_path: Path) -> None:
+    """Profile v1 has rule X, user suppresses X, profile v2 removes X → override cleaned."""
+    lockfile_path = tmp_path / "profiles.lock.json"
+    profile_v1 = {
+        "name": "ml", "version": "1.0",
+        "bashAliases": {"py.test": "pytest", "pip3": "pip"},
+    }
+    profile_v2 = {
+        "name": "ml", "version": "2.0",
+        "bashAliases": {"pip3": "pip"},  # py.test removed by author
+    }
+
+    # Set up lockfile with v1 + user override suppressing py.test
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    data = lockfile_mod.add_profile(data, profile_v1, "local:ml.json")
+    data["user_overrides"] = {
+        "removed_rules": [
+            {"type": "bashAlias", "value": "py.test", "profile": "ml", "source": "tighten"}
+        ]
+    }
+    lockfile_mod.write_lockfile(data, lockfile_path)
+
+    # Write v2 to a file for fetch
+    profile_path = tmp_path / "ml.json"
+    profile_path.write_text(json.dumps(profile_v2))
+
+    with (
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
+    ):
+        result = profile_ops.update_profiles(lockfile_path=lockfile_path)
+
+    assert result["updated"]
+    # The override for py.test should have been cleaned
+    assert "reconciled_overrides" in result
+    assert any("py.test" in r for r in result["reconciled_overrides"])
+
+    # Verify the lockfile no longer has the override
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    remaining = data.get("user_overrides", {}).get("removed_rules", [])
+    remaining_values = [r["value"] for r in remaining]
+    assert "py.test" not in remaining_values
+
+
+def test_update_preserves_valid_overrides(tmp_path: Path) -> None:
+    """Profile v2 still has rule Y, user suppressed Y → override preserved."""
+    lockfile_path = tmp_path / "profiles.lock.json"
+    profile_v1 = {
+        "name": "ml", "version": "1.0",
+        "bashAliases": {"pip3": "pip"},
+    }
+    profile_v2 = {
+        "name": "ml", "version": "2.0",
+        "bashAliases": {"pip3": "pip"},  # pip3 still there
+    }
+
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    data = lockfile_mod.add_profile(data, profile_v1, "local:ml.json")
+    data["user_overrides"] = {
+        "removed_rules": [
+            {"type": "bashAlias", "value": "pip3", "profile": "ml", "source": "tighten"}
+        ]
+    }
+    lockfile_mod.write_lockfile(data, lockfile_path)
+
+    with (
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
+    ):
+        result = profile_ops.update_profiles(lockfile_path=lockfile_path)
+
+    assert result["updated"]
+    # Override should be preserved since pip3 is still in v2
+    assert "reconciled_overrides" not in result or not result["reconciled_overrides"]
+
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    remaining = data.get("user_overrides", {}).get("removed_rules", [])
+    remaining_values = [r["value"] for r in remaining]
+    assert "pip3" in remaining_values

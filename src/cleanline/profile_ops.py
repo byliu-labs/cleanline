@@ -150,6 +150,14 @@ def update_profiles(
         })
 
     if result["updated"]:
+        # Reconcile overrides: remove overrides for rules the author removed
+        lockfile_data, cleaned = lockfile_mod.remove_redundant_overrides(lockfile_data)
+        if cleaned:
+            for override in cleaned:
+                result.setdefault("reconciled_overrides", []).append(
+                    f"Override '{override.get('type')}:{override.get('value')}' "
+                    f"is now redundant (author removed it). Cleaning up."
+                )
         lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
 
     return result

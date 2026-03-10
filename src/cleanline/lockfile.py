@@ -95,10 +95,107 @@ def merge_profiles(profiles: list[dict]) -> dict:
     return merged
 
 
+def apply_overrides(merged: dict, overrides: dict) -> dict:
+    """Filter suppressed rules out of the merged section.
+
+    Overrides come from lockfile_data["user_overrides"]["removed_rules"].
+    Each entry has type (bashAlias/domain/commandMapping) and value.
+    """
+    removed_rules = overrides.get("removed_rules", [])
+    if not removed_rules:
+        return merged
+
+    # Work on a copy
+    merged = json.loads(json.dumps(merged))
+
+    for rule in removed_rules:
+        rtype = rule.get("type")
+        value = rule.get("value")
+        if not rtype or not value:
+            continue
+
+        if rtype == "bashAlias":
+            merged.get("bashAliases", {}).pop(value, None)
+        elif rtype == "domain":
+            domains = merged.get("webfetch", {}).get("extraDomains", [])
+            if value in domains:
+                domains.remove(value)
+        elif rtype == "commandMapping":
+            merged.get("commandMappings", {}).pop(value, None)
+
+    return merged
+
+
+def add_override(lockfile_data: dict, override_entry: dict) -> dict:
+    """Append an override entry, avoiding duplicates by type+value."""
+    overrides = lockfile_data.setdefault("user_overrides", {})
+    removed = overrides.setdefault("removed_rules", [])
+
+    # Check for duplicate
+    for existing in removed:
+        if (existing.get("type") == override_entry.get("type")
+                and existing.get("value") == override_entry.get("value")):
+            return lockfile_data
+
+    removed.append(override_entry)
+    return lockfile_data
+
+
+def remove_redundant_overrides(lockfile_data: dict) -> tuple[dict, list[dict]]:
+    """Remove overrides for rules no longer in any profile.
+
+    Returns (updated lockfile_data, list of cleaned override entries).
+    """
+    overrides = lockfile_data.get("user_overrides", {})
+    removed_rules = overrides.get("removed_rules", [])
+    if not removed_rules:
+        return lockfile_data, []
+
+    # Build a set of all rules across all profiles
+    profile_aliases: set[str] = set()
+    profile_domains: set[str] = set()
+    profile_mappings: set[str] = set()
+    for p in lockfile_data.get("profiles", []):
+        content = p.get("content", {})
+        profile_aliases.update(content.get("bashAliases", {}).keys())
+        profile_domains.update(
+            content.get("webfetch", {}).get("extraDomains", [])
+        )
+        profile_mappings.update(content.get("commandMappings", {}).keys())
+
+    kept: list[dict] = []
+    cleaned: list[dict] = []
+    for rule in removed_rules:
+        rtype = rule.get("type")
+        value = rule.get("value")
+        still_exists = False
+
+        if rtype == "bashAlias" and value in profile_aliases:
+            still_exists = True
+        elif rtype == "domain" and value in profile_domains:
+            still_exists = True
+        elif rtype == "commandMapping" and value in profile_mappings:
+            still_exists = True
+
+        if still_exists:
+            kept.append(rule)
+        else:
+            cleaned.append(rule)
+
+    overrides["removed_rules"] = kept
+    lockfile_data["user_overrides"] = overrides
+    return lockfile_data, cleaned
+
+
 def rebuild_merged(lockfile_data: dict) -> dict:
-    """Rebuild the 'merged' section from all installed profiles."""
+    """Rebuild the 'merged' section from all installed profiles.
+
+    Applies user_overrides after merging to suppress rules.
+    """
     profiles = [p.get("content", {}) for p in lockfile_data.get("profiles", [])]
-    lockfile_data["merged"] = merge_profiles(profiles)
+    merged = merge_profiles(profiles)
+    overrides = lockfile_data.get("user_overrides", {})
+    lockfile_data["merged"] = apply_overrides(merged, overrides)
     return lockfile_data
 
 

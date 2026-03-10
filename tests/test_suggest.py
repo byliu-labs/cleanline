@@ -116,6 +116,59 @@ def test_generate_suggestions_empty() -> None:
 
 
 # ============================================================================
+# GRADUATED TRUST: CONFIDENCE + SORTING + MIN COUNT
+# ============================================================================
+
+
+def test_find_version_groups_below_min_count() -> None:
+    """Groups with total < MIN_SUGGEST_COUNT should be excluded."""
+    commands = [("python3.12", 1), ("python3.13", 1)]
+    groups = find_version_groups(commands)
+    assert len(groups) == 0  # total=2, below default min_count=3
+
+
+def test_generate_suggestions_confidence_high() -> None:
+    events = _make_events("Bash", ["python3.12 x"] * 8 + ["python3.13 y"] * 7)
+    result = generate_suggestions(events)
+    assert len(result["command_groups"]) == 1
+    assert result["command_groups"][0]["confidence"] == "high"
+
+
+def test_generate_suggestions_confidence_medium() -> None:
+    events = _make_events("Bash", ["python3.12 x"] * 4 + ["python3.13 y"] * 3)
+    result = generate_suggestions(events)
+    assert len(result["command_groups"]) == 1
+    assert result["command_groups"][0]["confidence"] == "medium"
+
+
+def test_generate_suggestions_confidence_low() -> None:
+    events = _make_events("Bash", ["python3.12 x"] * 2 + ["python3.13 y"] * 1)
+    result = generate_suggestions(events)
+    assert len(result["command_groups"]) == 1
+    assert result["command_groups"][0]["confidence"] == "low"
+
+
+def test_generate_suggestions_sorted() -> None:
+    """Groups should be sorted by total descending."""
+    events = (
+        _make_events("Bash", ["python3.12 x"] * 3 + ["python3.13 y"] * 2)  # total=5
+        + _make_events("Bash", ["cargo-clippy z"] * 8 + ["cargo-fmt w"] * 7)  # total=15
+    )
+    result = generate_suggestions(events)
+    groups = result["command_groups"]
+    assert len(groups) == 2
+    assert groups[0]["total"] >= groups[1]["total"]
+    assert groups[0]["canonical"] == "cargo"
+
+
+def test_generate_suggestions_custom_min_count() -> None:
+    """Custom min_count should filter groups below threshold."""
+    events = _make_events("Bash", ["python3.12 x"] * 3 + ["python3.13 y"] * 1)  # total=4
+    result = generate_suggestions(events, min_count=5)
+    assert len(result["command_groups"]) == 0
+
+
+# ============================================================================
 # CLI OUTPUT: PROMPTS SAVED
 # ============================================================================
 

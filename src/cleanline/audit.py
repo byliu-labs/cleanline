@@ -15,6 +15,35 @@ from pathlib import Path
 DEFAULT_AUDIT_LOG = Path.home() / ".claude" / "hooks" / "hook.jsonl"
 
 
+def parse_rule(matched_rule: str) -> dict:
+    """Parse a matched_rule string into a structured dict.
+
+    Formats:
+      "alias:python3.13->python"  -> {"type": "alias", "key": "python3.13", "canonical": "python"}
+      "mapping:npm test"          -> {"type": "mapping", "canonical": "npm test"}
+      "domain:*.docs.rs"          -> {"type": "domain", "pattern": "*.docs.rs"}
+      "metacharacter"             -> {"type": "metacharacter"}
+      "no_match"                  -> {"type": "no_match"}
+      anything else               -> {"type": "unknown", "raw": original_string}
+    """
+    if matched_rule == "metacharacter":
+        return {"type": "metacharacter"}
+    if matched_rule == "no_match":
+        return {"type": "no_match"}
+    if matched_rule.startswith("alias:"):
+        body = matched_rule[len("alias:"):]
+        # Split on the last -> since alias keys can theoretically contain ->
+        parts = body.rsplit("->", 1)
+        if len(parts) == 2:
+            return {"type": "alias", "key": parts[0], "canonical": parts[1]}
+        return {"type": "unknown", "raw": matched_rule}
+    if matched_rule.startswith("mapping:"):
+        return {"type": "mapping", "canonical": matched_rule[len("mapping:"):]}
+    if matched_rule.startswith("domain:"):
+        return {"type": "domain", "pattern": matched_rule[len("domain:"):]}
+    return {"type": "unknown", "raw": matched_rule}
+
+
 def read_audit_log(path: Path | None = None, max_lines: int = 10000) -> list[dict]:
     """Read the audit log, returning most recent entries first."""
     path = path or DEFAULT_AUDIT_LOG
