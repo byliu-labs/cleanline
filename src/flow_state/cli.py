@@ -567,8 +567,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # setup
     p_setup = sub.add_parser("setup", help="First-time onboarding")
-    p_setup.add_argument("--tier", choices=sorted(VALID_TIERS), default=DEFAULT_TIER,
-                          help=f"Trust tier (default: {DEFAULT_TIER})")
+    p_setup.add_argument("--tier", choices=sorted(VALID_TIERS), default=None,
+                          help=f"Trust tier (default: interactive prompt, or {DEFAULT_TIER} with --yes)")
     p_setup.add_argument("--profile", help="Also init a profile (github:user/repo or path)")
     p_setup.add_argument("--config-dir", help="Override config directory")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done")

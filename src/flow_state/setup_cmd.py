@@ -284,6 +284,42 @@ def print_setup_summary(
     print(f"\n  Config will be written to ~/.claude/hooks/permission-config.json")
 
 
+_TIER_DESCRIPTIONS = {
+    "cautious": "Docs-only domains, minimal file access, higher thresholds",
+    "balanced": "Popular dev domains, /tmp write, standard thresholds (recommended)",
+    "flow":     "Broad domains, ~/Documents write, relaxed thresholds",
+}
+
+
+def prompt_tier_selection() -> str:
+    """Show interactive tier menu. Returns selected tier name."""
+    from .tiers import TIER_ORDER
+
+    print("\nSelect a trust tier:\n")
+    for i, tier in enumerate(TIER_ORDER, 1):
+        desc = _TIER_DESCRIPTIONS[tier]
+        print(f"  {i}) {tier:10s} — {desc}")
+
+    print()
+    while True:
+        try:
+            answer = input(f"Choice [1-{len(TIER_ORDER)}] (default: 2): ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return DEFAULT_TIER
+
+        if answer == "":
+            return "balanced"
+
+        if answer in ("1", "2", "3"):
+            return TIER_ORDER[int(answer) - 1]
+
+        if answer in TIER_ORDER:
+            return answer
+
+        print(f"  Invalid choice. Enter 1-{len(TIER_ORDER)} or a tier name.")
+
+
 def confirm_proceed(auto_yes: bool = False) -> bool:
     """Ask user to confirm. Returns True if they agree."""
     if auto_yes:
@@ -307,7 +343,7 @@ def confirm_proceed(auto_yes: bool = False) -> bool:
 def run_setup(
     config_dir: Path,
     *,
-    tier: str = DEFAULT_TIER,
+    tier: str | None = None,
     profile_source: str | None = None,
     dry_run: bool = False,
     auto_yes: bool = False,
@@ -315,8 +351,8 @@ def run_setup(
 ) -> dict:
     """Execute the setup command.
 
-    Scans settings.json allow list, generates permission-config.json with
-    resolvedCanonicals. Plugin installation is handled separately.
+    When tier is None: prompts interactively (if interactive), else uses DEFAULT_TIER.
+    When auto_yes: skips tier prompt, uses DEFAULT_TIER if tier is None.
 
     Returns a summary dict of what was done.
     """
@@ -325,6 +361,14 @@ def run_setup(
     from . import schema as schema_mod
 
     result: dict = {"actions": [], "warnings": [], "errors": []}
+
+    # Resolve tier: explicit > prompt > default
+    if tier is None:
+        if interactive and not auto_yes and not dry_run:
+            tier = prompt_tier_selection()
+        else:
+            tier = DEFAULT_TIER
+    result["tier"] = tier
 
     # Step 0: Prerequisites
     if interactive and not dry_run:

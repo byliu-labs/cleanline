@@ -12,6 +12,7 @@ from flow_state.setup_cmd import (
     generate_config,
     load_known_aliases,
     print_setup_summary,
+    prompt_tier_selection,
     run_setup,
 )
 
@@ -359,3 +360,77 @@ def test_print_setup_summary_skips_empty_categories(capsys: object) -> None:
     print_setup_summary(set(), config)
     out = capsys.readouterr().out  # type: ignore[attr-defined]
     assert "alias rules" not in out
+
+
+# ============================================================================
+# INTERACTIVE TIER SELECTION
+# ============================================================================
+
+
+def test_prompt_tier_selection_number_input() -> None:
+    """Typing '1' selects cautious, '3' selects flow."""
+    with patch("builtins.input", return_value="1"):
+        assert prompt_tier_selection() == "cautious"
+    with patch("builtins.input", return_value="3"):
+        assert prompt_tier_selection() == "flow"
+
+
+def test_prompt_tier_selection_name_input() -> None:
+    """Typing a tier name directly also works."""
+    with patch("builtins.input", return_value="flow"):
+        assert prompt_tier_selection() == "flow"
+
+
+def test_prompt_tier_selection_default_empty() -> None:
+    """Empty input defaults to balanced."""
+    with patch("builtins.input", return_value=""):
+        assert prompt_tier_selection() == "balanced"
+
+
+def test_prompt_tier_selection_eof_defaults() -> None:
+    """EOFError (piped input) defaults to balanced."""
+    with patch("builtins.input", side_effect=EOFError):
+        assert prompt_tier_selection() == "balanced"
+
+
+def test_prompt_tier_selection_invalid_then_valid() -> None:
+    """Invalid input re-prompts until valid."""
+    with patch("builtins.input", side_effect=["x", "2"]):
+        assert prompt_tier_selection() == "balanced"
+
+
+def test_run_setup_tier_none_auto_yes_uses_default(tmp_path: Path) -> None:
+    """tier=None with auto_yes should use balanced (no prompt)."""
+    from flow_state import lockfile as lockfile_mod
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"permissions": {"allow": []}}))
+    hooks_dir = tmp_path / "hooks"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    with (
+        patch("flow_state.setup_cmd.find_settings_path", return_value=settings_path),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
+        result = run_setup(hooks_dir, tier=None, auto_yes=True, interactive=True)
+
+    assert result["tier"] == "balanced"
+    assert not result.get("errors")
+
+
+def test_run_setup_explicit_tier_skips_prompt(tmp_path: Path) -> None:
+    """Explicit --tier should skip prompt even in interactive mode."""
+    from flow_state import lockfile as lockfile_mod
+
+    settings_path = tmp_path / "settings.json"
+    settings_path.write_text(json.dumps({"permissions": {"allow": []}}))
+    hooks_dir = tmp_path / "hooks"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    with (
+        patch("flow_state.setup_cmd.find_settings_path", return_value=settings_path),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
+        result = run_setup(hooks_dir, tier="flow", auto_yes=True, interactive=True)
+
+    assert result["tier"] == "flow"
