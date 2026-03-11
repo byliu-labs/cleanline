@@ -18,7 +18,7 @@ MAX_FILE_PATHS = 50
 WARN_THRESHOLD = 0.5
 
 REQUIRED_FIELDS = {"name", "version"}
-OPTIONAL_FIELDS = {"description", "author", "bashAliases", "commandMappings", "webfetch", "fileAccess", "meta"}
+OPTIONAL_FIELDS = {"description", "author", "schema_version", "bashAliases", "commandMappings", "webfetch", "fileAccess", "meta"}
 
 
 def validate_profile(profile: dict) -> tuple[list[str], list[str]]:

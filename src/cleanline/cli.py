@@ -6,6 +6,7 @@ Commands:
   setup              First-time onboarding
   init <source>      Add a profile (github:user/repo or local path)
   status             Show installed profiles and audit summary
+  export             Export user config as a shareable profile
   suggest            Propose config changes from audit data
   tighten            Identify and remove stale permission rules
   clean              Consolidate settings.json allow list
@@ -27,6 +28,7 @@ from . import audit as audit_mod
 from . import tighten as tighten_mod
 from . import lockfile as lockfile_mod
 from . import clean_cmd as clean_mod
+from . import export_cmd as export_mod
 from .tiers import DEFAULT_TIER, VALID_TIERS, get_tier_config
 
 
@@ -256,6 +258,36 @@ def cmd_clean(args: argparse.Namespace) -> int:
         print(f"  + {action}")
 
     return 0
+
+
+def cmd_export(args: argparse.Namespace) -> int:
+    """Export user config as a shareable profile."""
+    result = export_mod.run_export(
+        output=args.output,
+        name=args.name,
+        description=args.description,
+        exclude_patterns=args.exclude_pattern or None,
+        include_write_paths=args.include_write_paths,
+        include_risky=args.include_risky,
+        dry_run=args.dry_run,
+        source=args.source,
+        homepage=args.homepage,
+        license_str=args.license,
+        tags=args.tags,
+    )
+
+    errors = result.get("errors", [])
+    warnings = result.get("warnings", [])
+    actions = result.get("actions", [])
+
+    for warning in warnings:
+        print(f"  ! {warning}")
+    for action in actions:
+        print(f"  + {action}")
+    for error in errors:
+        print(f"  x {error}")
+
+    return 1 if errors else 0
 
 
 def cmd_suggest(args: argparse.Namespace) -> int:
@@ -539,6 +571,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_clean.add_argument("--dry-run", action="store_true", help="Show analysis without applying")
     p_clean.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
+    # export
+    p_export = sub.add_parser("export", help="Export user config as a shareable profile")
+    p_export.add_argument("--output", "-o", help="Output file path (default: stdout)")
+    p_export.add_argument("--name", help="Profile name")
+    p_export.add_argument("--description", help="Profile description")
+    p_export.add_argument("--exclude-pattern", action="append",
+                          help="Glob to exclude entries (repeatable)")
+    p_export.add_argument("--include-write-paths", action="store_true",
+                          help="Include writePaths in export")
+    p_export.add_argument("--include-risky", action="store_true",
+                          help="Don't strip risky entries (internal domains, home paths)")
+    p_export.add_argument("--dry-run", action="store_true",
+                          help="Preview without writing")
+    p_export.add_argument("--source", help="Source URL for meta block")
+    p_export.add_argument("--homepage", help="Homepage URL for meta block")
+    p_export.add_argument("--license", help="License for meta block")
+    p_export.add_argument("--tags", help="Comma-separated tags for meta block")
+
     # suggest
     p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
     p_suggest.add_argument("--apply", action="store_true", help="Apply suggested changes interactively")
@@ -584,6 +634,7 @@ def main(argv: list[str] | None = None) -> int:
         "init": cmd_init,
         "status": cmd_status,
         "clean": cmd_clean,
+        "export": cmd_export,
         "suggest": cmd_suggest,
         "tighten": cmd_tighten,
         "update": cmd_update,
