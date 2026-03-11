@@ -317,13 +317,24 @@ def cmd_suggest(args: argparse.Namespace) -> int:
     cmd_groups = suggestions.get("command_groups", [])
     domain_groups = suggestions.get("domain_groups", [])
     path_groups = suggestions.get("file_path_groups", [])
-    saveable = sum(g["total"] for g in cmd_groups) + sum(g["total"] for g in domain_groups) + sum(g["total"] for g in path_groups)
+    write_groups = suggestions.get("write_path_groups", [])
+    saveable = (sum(g["total"] for g in cmd_groups) + sum(g["total"] for g in domain_groups)
+                + sum(g["total"] for g in path_groups) + sum(g["total"] for g in write_groups))
 
     if path_groups:
         print(f"\nFile read paths to add:")
         for group in path_groups:
             conf = group.get("confidence", "")
             conf_label = f", {conf} confidence" if conf else ""
+            print(f"  {group['pattern']}:  ({group['total']} prompts saved{conf_label})")
+            for p, count in group["paths"]:
+                print(f"    {p}  ({count}x)")
+
+    if write_groups:
+        print(f"\nFile write paths to add (review carefully):")
+        for group in write_groups:
+            conf = group.get("confidence", "")
+            conf_label = f", {conf}" if conf else ""
             print(f"  {group['pattern']}:  ({group['total']} prompts saved{conf_label})")
             for p, count in group["paths"]:
                 print(f"    {p}  ({count}x)")
@@ -368,11 +379,13 @@ def cmd_suggest(args: argparse.Namespace) -> int:
         print(f"\nApplying these suggestions would save {saveable} prompts.")
         print("Run 'flowstate suggest --apply' to apply.")
 
-    if not any([cmd_groups, domain_groups, path_groups, top_cmds, top_doms, top_paths]):
+    all_groups = [cmd_groups, domain_groups, path_groups, write_groups,
+                  top_cmds, top_doms, top_paths]
+    if not any(all_groups):
         print("\n  No suggestions -- all passthroughs are low frequency.")
 
     # --apply: apply suggestions interactively
-    if args.apply and any([cmd_groups, domain_groups, path_groups]):
+    if args.apply and any([cmd_groups, domain_groups, path_groups, write_groups]):
         return _apply_suggestions(suggestions)
 
     return 0

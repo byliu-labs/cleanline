@@ -37,7 +37,9 @@ def _build_reverse_alias_map() -> dict[str, str]:
     return reverse
 
 
-FILE_TOOLS = {"Read", "Edit", "Write", "Glob", "Grep"}
+READ_TOOLS = {"Read", "Glob", "Grep"}
+WRITE_TOOLS = {"Edit", "Write"}
+FILE_TOOLS = READ_TOOLS | WRITE_TOOLS
 
 
 def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
@@ -46,11 +48,13 @@ def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
     Returns dict with keys:
       "commands": [(command, count), ...]  — top passthrough commands
       "domains": [(domain, count), ...]    — top passthrough domains
-      "file_paths": [(path, count), ...]   — top passthrough file paths
+      "file_paths": [(path, count), ...]   — top passthrough file paths (read)
+      "write_file_paths": [(path, count), ...] — top passthrough file paths (write)
     """
     cmd_counts: Counter[str] = Counter()
     domain_counts: Counter[str] = Counter()
-    file_path_counts: Counter[str] = Counter()
+    read_path_counts: Counter[str] = Counter()
+    write_path_counts: Counter[str] = Counter()
 
     for event in events:
         if event.get("decision") != "passthrough":
@@ -61,19 +65,21 @@ def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
             continue
 
         if tool == "Bash":
-            # Extract the base command (first token)
             parts = input_val.split(None, 1)
             if parts:
                 cmd_counts[parts[0]] += 1
         elif tool == "WebFetch":
             domain_counts[input_val] += 1
-        elif tool in FILE_TOOLS:
-            file_path_counts[input_val] += 1
+        elif tool in READ_TOOLS:
+            read_path_counts[input_val] += 1
+        elif tool in WRITE_TOOLS:
+            write_path_counts[input_val] += 1
 
     return {
         "commands": cmd_counts.most_common(20),
         "domains": domain_counts.most_common(20),
-        "file_paths": file_path_counts.most_common(20),
+        "file_paths": read_path_counts.most_common(20),
+        "write_file_paths": write_path_counts.most_common(20),
     }
 
 
@@ -230,7 +236,22 @@ def generate_suggestions(
     """
     cfg = get_tier_config(tier)
     effective_min = min_count if min_count is not None else cfg["suggest_min_count"]
+    write_min = cfg["suggest_write_min_count"]
     grouped = group_passthroughs(events)
+
+    # Write path groups use higher threshold and always get a warning label
+    write_groups = find_path_groups(
+        grouped.get("write_file_paths", []), min_count=write_min, tier=tier,
+    )
+    for group in write_groups:
+        group["access"] = "write"
+        group["confidence"] = "write-" + group.get("confidence", "low")
+
+    read_groups = find_path_groups(
+        grouped.get("file_paths", []), min_count=effective_min, tier=tier,
+    )
+    for group in read_groups:
+        group["access"] = "read"
 
     return {
         "command_groups": find_version_groups(
@@ -239,12 +260,12 @@ def generate_suggestions(
         "domain_groups": find_domain_groups(
             grouped["domains"], min_count=effective_min, tier=tier,
         ),
-        "file_path_groups": find_path_groups(
-            grouped.get("file_paths", []), min_count=effective_min, tier=tier,
-        ),
+        "file_path_groups": read_groups,
+        "write_path_groups": write_groups,
         "top_commands": grouped["commands"][:10],
         "top_domains": grouped["domains"][:10],
         "top_file_paths": grouped.get("file_paths", [])[:10],
+        "top_write_paths": grouped.get("write_file_paths", [])[:10],
     }
 
 
@@ -275,7 +296,11 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
     for group in suggestions.get("file_path_groups", []):
         new_read_paths.append(group["pattern"])
 
-    if not new_aliases and not new_domains and not new_read_paths:
+    new_write_paths: list[str] = []
+    for group in suggestions.get("write_path_groups", []):
+        new_write_paths.append(group["pattern"])
+
+    if not new_aliases and not new_domains and not new_read_paths and not new_write_paths:
         result["actions"].append("nothing to apply")
         return result
 
@@ -292,6 +317,10 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
     if new_read_paths:
         print(f"  + {len(new_read_paths)} file read paths:")
         for path in new_read_paths:
+            print(f"      {path}")
+    if new_write_paths:
+        print(f"  + {len(new_write_paths)} file write paths:")
+        for path in new_write_paths:
             print(f"      {path}")
 
     try:
@@ -338,6 +367,16 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
             existing_read_set.add(path)
             added_paths += 1
 
+    # Merge write paths into user_config.fileAccess
+    existing_write = existing_fa.setdefault("writePaths", [])
+    existing_write_set = set(existing_write)
+    added_write_paths = 0
+    for path in new_write_paths:
+        if path not in existing_write_set:
+            existing_write.append(path)
+            existing_write_set.add(path)
+            added_write_paths += 1
+
     # Write lockfile + regenerate permission-config.json
     lockfile_mod.write_lockfile(lockfile_data)
     lockfile_mod.write_permission_config(config_path, lockfile_data)
@@ -348,5 +387,7 @@ def apply_suggestions(suggestions: dict, config_path: Path) -> dict:
         result["actions"].append(f"added {added_domains} domains")
     if added_paths:
         result["actions"].append(f"added {added_paths} read paths")
+    if added_write_paths:
+        result["actions"].append(f"added {added_write_paths} write paths")
 
     return result
