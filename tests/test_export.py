@@ -503,3 +503,43 @@ def test_run_export_write_paths_warning(tmp_path: Path) -> None:
 
     warnings = result.get("warnings", [])
     assert any("writePaths excluded" in w for w in warnings)
+
+
+def test_build_profile_custom_version() -> None:
+    """Custom version should override the default."""
+    uc = {"bashAliases": {"py": "python"}}
+    p = build_profile(uc, "balanced", name="test", version="2.1.0")
+    assert p["version"] == "2.1.0"
+
+
+def test_run_export_custom_version(tmp_path: Path) -> None:
+    """--version flag flows through run_export to the profile."""
+    lockfile_path = _make_lockfile(tmp_path, {"bashAliases": {"py": "python"}})
+
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+        mock_read.return_value = json.loads(lockfile_path.read_text())
+        result = run_export(
+            name="test",
+            description="test",
+            version="3.0.0",
+            dry_run=True,
+            interactive=False,
+        )
+
+    assert result["profile"]["version"] == "3.0.0"
+
+
+def test_run_export_default_version(tmp_path: Path) -> None:
+    """Without --version, profile version defaults to 1.0.0."""
+    lockfile_path = _make_lockfile(tmp_path, {"bashAliases": {"py": "python"}})
+
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+        mock_read.return_value = json.loads(lockfile_path.read_text())
+        result = run_export(
+            name="test",
+            description="test",
+            dry_run=True,
+            interactive=False,
+        )
+
+    assert result["profile"]["version"] == "1.0.0"
