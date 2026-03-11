@@ -252,6 +252,7 @@ def run_export(
     output: str | None = None,
     name: str | None = None,
     description: str | None = None,
+    version: str | None = None,
     exclude_patterns: list[str] | None = None,
     include_write_paths: bool = False,
     include_risky: bool = False,
@@ -307,6 +308,7 @@ def run_export(
     profile = build_profile(
         user_config, tier,
         name=name,
+        version=version or "1.0.0",
         description=description or "",
         include_write_paths=include_write_paths,
         meta_fields=meta_fields if meta_fields else None,
