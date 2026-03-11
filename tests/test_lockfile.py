@@ -419,3 +419,33 @@ def test_write_permission_config_no_settings(tmp_path: Path) -> None:
 
     config = json.loads(config_path.read_text())
     assert config["resolvedCanonicals"] == []
+
+
+def test_write_permission_config_includes_tier(tmp_path: Path) -> None:
+    """flowstateTier should be written from user_config.tier."""
+    config_path = tmp_path / "permission-config.json"
+    lockfile_data = {
+        "profiles": [],
+        "merged": {},
+        "user_config": {"tier": "flow", "bashAliases": {"py3": "python"}},
+    }
+
+    write_permission_config(config_path, lockfile_data, tmp_path / "no.json")
+
+    config = json.loads(config_path.read_text())
+    assert config["flowstateTier"] == "flow"
+
+
+def test_write_permission_config_default_tier(tmp_path: Path) -> None:
+    """Missing tier in user_config defaults to balanced."""
+    config_path = tmp_path / "permission-config.json"
+    lockfile_data = {
+        "profiles": [],
+        "merged": {},
+        "user_config": {},
+    }
+
+    write_permission_config(config_path, lockfile_data, tmp_path / "no.json")
+
+    config = json.loads(config_path.read_text())
+    assert config["flowstateTier"] == "balanced"

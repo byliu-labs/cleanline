@@ -310,8 +310,9 @@ def write_permission_config(
     user_config = lockfile_data.get("user_config", {})
     merged = lockfile_data.get("merged", {})
 
-    # Start with user config as base
-    config: dict = {}
+    # Start with user config as base — include tier metadata
+    tier = get_tier(lockfile_data)
+    config: dict = {"flowstateTier": tier}
 
     # Merge aliases: user first, then profiles on top (profiles extend, don't override)
     combined_aliases = dict(user_config.get("bashAliases", {}))
