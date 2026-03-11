@@ -11,6 +11,7 @@ from flow_state.setup_cmd import (
     generate_aliases,
     generate_config,
     load_known_aliases,
+    print_setup_summary,
     run_setup,
 )
 
@@ -307,3 +308,54 @@ def test_generate_config_merges_scanned_file_paths_with_tier() -> None:
     assert "/my/output/**" in config["fileAccess"]["writePaths"]
     # Cautious baseline read paths should also be present
     assert "~/.claude/**" in config["fileAccess"]["readPaths"]
+
+
+# ============================================================================
+# SETUP SUMMARY OUTPUT (rule samples)
+# ============================================================================
+
+
+def test_print_setup_summary_shows_alias_samples(capsys: object) -> None:
+    """Summary should show sample alias rules."""
+    config = generate_config({"python", "cargo"}, tier="balanced")
+    print_setup_summary({"python", "cargo"}, config)
+    out = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "alias rules" in out
+    assert "->" in out  # at least one "variant -> canonical" sample
+
+
+def test_print_setup_summary_shows_domain_samples(capsys: object) -> None:
+    """Summary should show sample domains."""
+    config = generate_config(set(), tier="balanced")
+    print_setup_summary(set(), config)
+    out = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "domains" in out
+    assert "*." in out  # wildcard domain sample
+
+
+def test_print_setup_summary_shows_file_access_samples(capsys: object) -> None:
+    """Summary should show file access samples with read/write labels."""
+    file_paths = {"readPaths": {"/src/**", "/docs/**"}, "writePaths": {"/tmp/**"}}
+    config = generate_config(set(), file_paths=file_paths, tier="balanced")
+    print_setup_summary(set(), config)
+    out = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "read:" in out
+    assert "write:" in out
+
+
+def test_print_setup_summary_and_more_overflow(capsys: object) -> None:
+    """Categories with >3 entries should show '... and N more'."""
+    config = generate_config({"python", "cargo", "node", "ruby"}, tier="flow")
+    # Flow tier has many domains, should trigger overflow
+    print_setup_summary({"python", "cargo", "node", "ruby"}, config)
+    out = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "... and" in out
+
+
+def test_print_setup_summary_skips_empty_categories(capsys: object) -> None:
+    """Empty categories should not appear."""
+    config = generate_config(set(), tier="cautious")
+    # No canonicals means no aliases
+    print_setup_summary(set(), config)
+    out = capsys.readouterr().out  # type: ignore[attr-defined]
+    assert "alias rules" not in out

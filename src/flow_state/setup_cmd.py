@@ -230,31 +230,56 @@ def check_prerequisites() -> list[str]:
 # ============================================================================
 
 
+_SAMPLE_SIZE = 3
+
+
+def _print_sample(items: list[str], fmt: str = "    {item}") -> None:
+    """Print up to _SAMPLE_SIZE items with an '... and N more' footer."""
+    if not items:
+        return
+    shown = items[:_SAMPLE_SIZE]
+    for item in shown:
+        print(fmt.format(item=item))
+    remaining = len(items) - len(shown)
+    if remaining > 0:
+        print(f"    ... and {remaining} more")
+
+
 def print_setup_summary(
     canonicals: set[str],
     config: dict,
 ) -> None:
-    """Print a clear summary of what setup will do."""
+    """Print a clear summary of what setup will do, with sample rules."""
     aliases = config.get("bashAliases", {})
     domains = config.get("webfetch", {}).get("extraDomains", [])
+    mappings = config.get("commandMappings", {})
 
     print("\nScanning ~/.claude/settings.json...")
     print(f"  Found {len(canonicals)} commands in your allow list")
 
     if aliases:
-        print("\nGenerating alias rules...")
-        print(f"  {len(aliases)} alias rules from known variants")
+        print(f"\n  {len(aliases)} alias rules:")
+        alias_lines = [f"{v} -> {aliases[v]}" for v in sorted(aliases)]
+        _print_sample(alias_lines)
+
+    if mappings:
+        print(f"\n  {len(mappings)} command mappings:")
+        _print_sample(sorted(mappings.keys()))
 
     if domains:
-        print("\nGenerating domain rules...")
-        print(f"  {len(domains)} documentation domains")
+        print(f"\n  {len(domains)} domains:")
+        _print_sample(sorted(domains))
 
     file_access = config.get("fileAccess", {})
-    read_count = len(file_access.get("readPaths", []))
-    write_count = len(file_access.get("writePaths", []))
-    if read_count or write_count:
-        print("\nGenerating file access rules...")
-        print(f"  {read_count} read paths, {write_count} write paths")
+    read_paths = file_access.get("readPaths", [])
+    write_paths = file_access.get("writePaths", [])
+    if read_paths or write_paths:
+        total = len(read_paths) + len(write_paths)
+        print(f"\n  {total} file access rules ({len(read_paths)} read, {len(write_paths)} write):")
+        if read_paths:
+            _print_sample(sorted(read_paths), fmt="    read:  {item}")
+        if write_paths:
+            _print_sample(sorted(write_paths), fmt="    write: {item}")
 
     print(f"\n  Config will be written to ~/.claude/hooks/permission-config.json")
 
