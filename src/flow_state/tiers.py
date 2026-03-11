@@ -1,6 +1,6 @@
-"""Trust tier definitions for Clean Line.
+"""Trust tier definitions for Flow State.
 
-Three tiers control the defaults that `cleanline setup` generates.
+Three tiers control the defaults that `flowstate setup` generates.
 Every threshold that varies by tier lives here — nowhere else.
 
 Tiers are metadata, not enforcement. They shape config content;

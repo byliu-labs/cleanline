@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "clean-line" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "flow-state" / "scripts"
 
 
 def _run_hook(

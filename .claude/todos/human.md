@@ -1,0 +1,1 @@
+- [ ] Re-enable sandbox (`/sandbox`) — was disabled for Flow State plugin installation (2026-03-10)

@@ -3,8 +3,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanline import lockfile as lockfile_mod
-from cleanline import profile_ops
+from flow_state import lockfile as lockfile_mod
+from flow_state import profile_ops
 
 
 def test_init_local_profile(tmp_path: Path, sample_profile: dict) -> None:
@@ -125,7 +125,7 @@ def test_update_reconciles_redundant_overrides(tmp_path: Path) -> None:
 
     with (
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
-        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
+        patch("flow_state.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
     ):
         result = profile_ops.update_profiles(lockfile_path=lockfile_path)
 
@@ -164,7 +164,7 @@ def test_update_preserves_valid_overrides(tmp_path: Path) -> None:
 
     with (
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
-        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
+        patch("flow_state.profile_ops.fetch_mod.fetch_profile", return_value=profile_v2),
     ):
         result = profile_ops.update_profiles(lockfile_path=lockfile_path)
 
@@ -199,8 +199,8 @@ def test_init_warns_when_profile_tier_exceeds_user_tier(tmp_path: Path) -> None:
 
     with (
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
-        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile),
-        patch("cleanline.setup_cmd.find_settings_path", return_value=None),
+        patch("flow_state.profile_ops.fetch_mod.fetch_profile", return_value=profile),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=None),
     ):
         result = profile_ops.init_profile("local:ml.json")
 
@@ -227,8 +227,8 @@ def test_init_no_warning_when_profile_tier_matches(tmp_path: Path) -> None:
 
     with (
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
-        patch("cleanline.profile_ops.fetch_mod.fetch_profile", return_value=profile),
-        patch("cleanline.setup_cmd.find_settings_path", return_value=None),
+        patch("flow_state.profile_ops.fetch_mod.fetch_profile", return_value=profile),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=None),
     ):
         result = profile_ops.init_profile("local:basic.json")
 

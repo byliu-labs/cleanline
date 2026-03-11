@@ -71,7 +71,7 @@ def init_profile(source: str) -> dict:
         if tier_index(rec_tier) > tier_index(current_tier):
             result["warnings"].append(
                 f"Profile recommends tier '{rec_tier}' but you're on '{current_tier}'. "
-                f"Run 'cleanline setup --tier {rec_tier}' for full profile effectiveness."
+                f"Run 'flowstate setup --tier {rec_tier}' for full profile effectiveness."
             )
 
     # Check for profile writePaths requiring opt-in

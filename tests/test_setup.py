@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanline.setup_cmd import (
+from flow_state.setup_cmd import (
     analyze_compatibility,
     check_prerequisites,
     extract_canonicals,
@@ -132,11 +132,11 @@ def test_setup_dry_run(tmp_path: Path) -> None:
 
 
 def test_setup_writes_config(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     lockfile_path = tmp_path / "profiles.lock.json"
     with (
-        patch("cleanline.setup_cmd.find_settings_path", return_value=None),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=None),
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
     ):
         result = run_setup(tmp_path, interactive=False)
@@ -165,7 +165,7 @@ def test_check_prerequisites_all_ok() -> None:
 
 def test_setup_full_flow(tmp_path: Path) -> None:
     """Full setup with auto_yes writes config with resolvedCanonicals."""
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     # Create a fake settings.json
     settings_dir = tmp_path / "claude"
@@ -179,7 +179,7 @@ def test_setup_full_flow(tmp_path: Path) -> None:
     lockfile_path = tmp_path / "profiles.lock.json"
 
     with (
-        patch("cleanline.setup_cmd.find_settings_path", return_value=settings_path),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=settings_path),
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
     ):
         result = run_setup(
@@ -203,7 +203,7 @@ def test_setup_full_flow(tmp_path: Path) -> None:
 
 def test_setup_saves_user_config_to_lockfile(tmp_path: Path) -> None:
     """Setup should save user_config to lockfile for future mutations."""
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps({
@@ -214,7 +214,7 @@ def test_setup_saves_user_config_to_lockfile(tmp_path: Path) -> None:
     lockfile_path = tmp_path / "profiles.lock.json"
 
     with (
-        patch("cleanline.setup_cmd.find_settings_path", return_value=settings_path),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=settings_path),
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
     ):
         result = run_setup(hooks_dir, auto_yes=True, interactive=True)
@@ -233,14 +233,14 @@ def test_generate_config_cautious_has_no_write_paths() -> None:
     config = generate_config({"python"}, tier="cautious")
     assert config["fileAccess"]["writePaths"] == []
     assert config["commandMappings"] == {}
-    assert config["cleanlineTier"] == "cautious"
+    assert config["flowstateTier"] == "cautious"
 
 
 def test_generate_config_balanced_has_tmp_write() -> None:
     """Balanced tier should have /tmp/** in writePaths."""
     config = generate_config({"python"}, tier="balanced")
     assert "/tmp/**" in config["fileAccess"]["writePaths"]
-    assert config["cleanlineTier"] == "balanced"
+    assert config["flowstateTier"] == "balanced"
 
 
 def test_generate_config_flow_has_documents() -> None:
@@ -250,7 +250,7 @@ def test_generate_config_flow_has_documents() -> None:
     assert "~/Documents/**" in config["fileAccess"]["writePaths"]
     assert "~/Desktop/**" in config["fileAccess"]["readPaths"]
     assert "~/Desktop/**" in config["fileAccess"]["writePaths"]
-    assert config["cleanlineTier"] == "flow"
+    assert config["flowstateTier"] == "flow"
 
 
 def test_generate_config_domains_cumulative() -> None:
@@ -276,7 +276,7 @@ def test_generate_config_flow_has_command_mappings() -> None:
 
 def test_run_setup_stores_tier_in_lockfile(tmp_path: Path) -> None:
     """Setup should store the selected tier in lockfile user_config."""
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     settings_path = tmp_path / "settings.json"
     settings_path.write_text(json.dumps({
@@ -287,7 +287,7 @@ def test_run_setup_stores_tier_in_lockfile(tmp_path: Path) -> None:
     lockfile_path = tmp_path / "profiles.lock.json"
 
     with (
-        patch("cleanline.setup_cmd.find_settings_path", return_value=settings_path),
+        patch("flow_state.setup_cmd.find_settings_path", return_value=settings_path),
         patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
     ):
         result = run_setup(hooks_dir, tier="cautious", auto_yes=True, interactive=True)

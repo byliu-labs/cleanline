@@ -11,7 +11,7 @@ import pytest
 # Import the script as a module
 import importlib.util
 
-SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "clean-line" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "flow-state" / "scripts"
 
 spec = importlib.util.spec_from_file_location("resolve_fileops", SCRIPTS_DIR / "resolve_fileops.py")
 resolve_fileops = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]

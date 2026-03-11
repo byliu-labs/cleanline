@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from cleanline.audit import (
+from flow_state.audit import (
     enrich_with_provenance,
     parse_rule,
     read_audit_log,

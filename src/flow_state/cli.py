@@ -1,6 +1,6 @@
-"""CLI entry point for Clean Line.
+"""CLI entry point for Flow State.
 
-Usage: cleanline <command> [options]
+Usage: flowstate <command> [options]
 
 Commands:
   setup              First-time onboarding
@@ -132,7 +132,7 @@ def cmd_status(args: argparse.Namespace) -> int:
             pct = 100 * total_allow // total
             print(f"  {total_allow} prompts saved out of {total} tool calls ({pct}% auto-approved)")
             if total_passthrough > 0:
-                print(f"  {total_passthrough} still prompted -- run 'cleanline suggest' to reduce")
+                print(f"  {total_passthrough} still prompted -- run 'flowstate suggest' to reduce")
         else:
             for decision, count in summary.items():
                 print(f"  {decision}: {count}")
@@ -174,8 +174,8 @@ def cmd_status(args: argparse.Namespace) -> int:
                     total = sum(len(c["entries"]) for c in file_consolidations)
                     print(f"  {total} file path entries can be consolidated")
                 if handled:
-                    print(f"  {len(handled)} entries also handled by Clean Line aliases")
-                print("  Run 'cleanline clean' to consolidate.")
+                    print(f"  {len(handled)} entries also handled by Flow State aliases")
+                print("  Run 'flowstate clean' to consolidate.")
 
     return 0
 
@@ -228,7 +228,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
                 print(f"    - {e}")
 
     if handled:
-        print(f"\nAlso handled by Clean Line ({len(handled)}, informational):")
+        print(f"\nAlso handled by Flow State ({len(handled)}, informational):")
         for h in handled:
             print(f"  {h['entry']}  (alias: {h['alias']})")
 
@@ -364,7 +364,7 @@ def cmd_suggest(args: argparse.Namespace) -> int:
 
     if saveable > 0:
         print(f"\nApplying these suggestions would save {saveable} prompts.")
-        print("Run 'cleanline suggest --apply' to apply.")
+        print("Run 'flowstate suggest --apply' to apply.")
 
     if not any([cmd_groups, domain_groups, path_groups, top_cmds, top_doms, top_paths]):
         print("\n  No suggestions -- all passthroughs are low frequency.")
@@ -477,7 +477,7 @@ def cmd_tighten(args: argparse.Namespace) -> int:
     if args.apply:
         if stale["insufficient_data"] and not args.force:
             print(f"\nRefused: only {span} days of audit data (minimum 7).")
-            print("Use 'cleanline tighten --apply --force' to override.")
+            print("Use 'flowstate tighten --apply --force' to override.")
             return 1
 
         try:
@@ -503,7 +503,7 @@ def cmd_tighten(args: argparse.Namespace) -> int:
                 print(f"  + {action}")
     else:
         if user_count or profile_count:
-            print("\nRun 'cleanline tighten --apply' to review each candidate.")
+            print("\nRun 'flowstate tighten --apply' to review each candidate.")
 
     return 0
 
@@ -545,8 +545,8 @@ def _load_permission_config() -> dict:
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
-        prog="cleanline",
-        description="Take the clean line -- fewer permission prompts in Claude Code.",
+        prog="flowstate",
+        description="Get into flow state -- fewer permission prompts in Claude Code.",
     )
     sub = parser.add_subparsers(dest="command", help="Available commands")
 

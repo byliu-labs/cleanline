@@ -76,8 +76,8 @@ def find_redundant_entries(allow_list: list[str]) -> list[dict]:
     return redundant
 
 
-def find_cleanline_handled(allow_list: list[str], config: dict) -> list[dict]:
-    """Entries also covered by Clean Line aliases. INFORMATIONAL ONLY.
+def find_flowstate_handled(allow_list: list[str], config: dict) -> list[dict]:
+    """Entries also covered by Flow State aliases. INFORMATIONAL ONLY.
 
     Detects Bash(cmd ...) where cmd is an alias key mapping to a canonical,
     and Bash(canonical *) already exists in the allow list.
@@ -287,7 +287,7 @@ def analyze_allow_list(
     return {
         "redundant": find_redundant_entries(allow_list),
         "consolidations": find_consolidations(allow_list),
-        "handled": find_cleanline_handled(allow_list, config),
+        "handled": find_flowstate_handled(allow_list, config),
         "file_redundant": find_redundant_file_entries(allow_list),
         "file_consolidations": find_file_consolidations(allow_list),
     }

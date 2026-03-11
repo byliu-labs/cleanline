@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from cleanline.lockfile import (
+from flow_state.lockfile import (
     add_override,
     add_profile,
     apply_overrides,
