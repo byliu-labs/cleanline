@@ -8,6 +8,7 @@ Commands:
   status             Show installed profiles and audit summary
   suggest            Propose config changes from audit data
   tighten            Identify and remove stale permission rules
+  clean              Consolidate settings.json allow list
   update [name]      Re-fetch and update profiles
   remove <name>      Remove a profile
   dry-run <source>   Show what a profile would change without applying
@@ -25,6 +26,7 @@ from . import suggest as suggest_mod
 from . import audit as audit_mod
 from . import tighten as tighten_mod
 from . import lockfile as lockfile_mod
+from . import clean_cmd as clean_mod
 from .tiers import DEFAULT_TIER, VALID_TIERS, get_tier_config
 
 
@@ -147,6 +149,85 @@ def cmd_status(args: argparse.Namespace) -> int:
         for rule, count in top_pass:
             print(f"  {rule}: {count}")
 
+    # Allow list health
+    settings_path = setup_cmd.find_settings_path()
+    if settings_path:
+        allow_list = setup_cmd.parse_allow_list(settings_path)
+        if allow_list:
+            config = _load_permission_config()
+            analysis = clean_mod.analyze_allow_list(allow_list, config)
+            redundant = analysis["redundant"]
+            handled = analysis["handled"]
+            if redundant or handled:
+                print("\nAllow List Health")
+                print("=================")
+                if redundant:
+                    print(f"  {len(redundant)} redundant entries found")
+                if handled:
+                    print(f"  {len(handled)} entries also handled by Clean Line aliases")
+                print("  Run 'cleanline clean' to consolidate.")
+
+    return 0
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Consolidate settings.json allow list."""
+    settings_path = setup_cmd.find_settings_path()
+    if settings_path is None:
+        print("Cannot find ~/.claude/settings.json")
+        return 1
+
+    allow_list = setup_cmd.parse_allow_list(settings_path)
+    if not allow_list:
+        print("\nNothing to clean — allow list is empty")
+        return 0
+
+    config = _load_permission_config()
+    analysis = clean_mod.analyze_allow_list(allow_list, config)
+
+    redundant = analysis["redundant"]
+    consolidations = analysis["consolidations"]
+    handled = analysis["handled"]
+
+    # Print analysis
+    if redundant:
+        print(f"\nRedundant entries ({len(redundant)}):")
+        for r in redundant:
+            print(f"  {r['entry']}  (covered by {r['covered_by']})")
+
+    if consolidations:
+        print(f"\nConsolidation opportunities ({len(consolidations)}):")
+        for c in consolidations:
+            print(f"  {c['proposed']}  (replaces {len(c['entries'])} entries)")
+            for e in c["entries"]:
+                print(f"    - {e}")
+
+    if handled:
+        print(f"\nAlso handled by Clean Line ({len(handled)}, informational):")
+        for h in handled:
+            print(f"  {h['entry']}  (alias: {h['alias']})")
+
+    if not redundant and not consolidations:
+        print("\nNothing to clean — allow list is already lean.")
+        return 0
+
+    if args.dry_run:
+        return 0
+
+    # Prompt
+    if not args.yes:
+        try:
+            answer = input("\nApply changes? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return 0
+        if answer not in ("", "y", "yes"):
+            return 0
+
+    result = clean_mod.apply_clean(settings_path, redundant, consolidations)
+    for action in result["actions"]:
+        print(f"  + {action}")
+
     return 0
 
 
@@ -261,13 +342,7 @@ def cmd_tighten(args: argparse.Namespace) -> int:
 
     config_dir = _default_hooks_dir()
     config_path = config_dir / "permission-config.json"
-
-    config: dict = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    config = _load_permission_config()
 
     lockfile_path = lockfile_mod.get_lockfile_path()
     lockfile_data = lockfile_mod.read_lockfile(lockfile_path)
@@ -397,6 +472,17 @@ def _default_hooks_dir() -> Path:
     return Path.home() / ".claude" / "hooks"
 
 
+def _load_permission_config() -> dict:
+    """Load permission-config.json from default hooks directory."""
+    config_path = _default_hooks_dir() / "permission-config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
@@ -420,6 +506,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # status
     sub.add_parser("status", help="Show installed profiles and audit summary")
+
+    # clean
+    p_clean = sub.add_parser("clean", help="Consolidate settings.json allow list")
+    p_clean.add_argument("--dry-run", action="store_true", help="Show analysis without applying")
+    p_clean.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
 
     # suggest
     p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
@@ -465,6 +556,7 @@ def main(argv: list[str] | None = None) -> int:
         "setup": cmd_setup,
         "init": cmd_init,
         "status": cmd_status,
+        "clean": cmd_clean,
         "suggest": cmd_suggest,
         "tighten": cmd_tighten,
         "update": cmd_update,

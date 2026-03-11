@@ -12,7 +12,8 @@ Plugin (bash dispatcher + Python)      CLI (Python package)
   scripts/bash-gate.sh (thin)            src/cleanline/cli.py
   scripts/resolve.py (single entry)      src/cleanline/setup_cmd.py
   scripts/approve-webfetch-domains.sh    src/cleanline/profile_ops.py
-  scripts/resolve_webfetch.py            src/cleanline/lockfile.py
+  scripts/resolve_webfetch.py            src/cleanline/clean_cmd.py
+                                         src/cleanline/lockfile.py
   scripts/approve-fileops.sh             src/cleanline/schema.py
   scripts/resolve_fileops.py             src/cleanline/suggest.py
   scripts/default-config.json            src/cleanline/tighten.py
@@ -122,6 +123,7 @@ User aliases take priority over profile aliases on key conflict.
 | Module | Responsibility |
 |--------|---------------|
 | `tiers.py` | Trust tier definitions: `VALID_TIERS`, `TIER_ORDER`, `TIER_DEFAULTS` (domains, paths, mappings, suggest/tighten thresholds). Pure constants, no I/O |
+| `clean_cmd.py` | Allow list consolidation (Bash entries only): find redundant entries (covered by wildcards), propose consolidations (specific entries → narrowest wildcard), detect Clean Line handled entries (informational). Pure analysis (`analyze_allow_list`) + mutation (`apply_clean`) split. Atomic settings.json write |
 | `cli.py` | Argument parsing, command dispatch, output formatting. Reads tier from lockfile for suggest/tighten defaults |
 | `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate tier-parameterized permission-config.json with resolvedCanonicals, save user_config (incl. tier) to lockfile |
 | `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run. Regenerates permission-config.json after mutations |
@@ -209,12 +211,14 @@ already suppressed, the override is auto-cleaned (redundancy detection).
 ## Development Commands
 
 ```bash
-uv run python -m pytest tests/ -v   # Run all tests (330+ tests)
+uv run python -m pytest tests/ -v   # Run all tests (360+ tests)
 cleanline --help                     # CLI help
 cleanline setup --dry-run            # Preview setup without writing
 cleanline setup --tier flow --yes    # Setup with flow tier, no prompts
 cleanline setup --yes                # Full setup, balanced (default), no prompts
-cleanline status                     # View profiles + tier + audit summary
+cleanline status                     # View profiles + tier + audit summary + allow list health
+cleanline clean --dry-run            # Analyze allow list without applying
+cleanline clean --yes                # Consolidate allow list, no prompts
 cleanline suggest --apply            # Apply suggestions (tier-aware thresholds)
 cleanline tighten                    # Analyze stale rules (tier-aware staleness)
 cleanline tighten --apply            # Remove/suppress stale rules
@@ -266,6 +270,7 @@ cleanline tighten --apply            # Remove/suppress stale rules
 | resolve.py | test_resolve.py | Metacharacter detection, chain splitting, binary normalization, alias/mapping/direct-canonical resolution, no-chaining invariant, audit logging, first-run config, hostname parsing, domain matching |
 | resolve_fileops.py | test_resolve_fileops.py | Path normalization, extraction, pattern matching, .env recursive denial, symlink resolution, hardcoded deny, check_access, audit logging |
 | hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors, file ops (read/write/deny/symlink) |
+| clean_cmd | test_clean.py | Redundancy detection (wildcard covers specific, bare cmd, multi-word wildcard, no cross-command), cleanline handled (alias + canonical wildcard, no canonical, specific entries), consolidations (narrowest prefix, root prefix, min_group, skip wildcarded, multiple groups), analyze_allow_list (returns all categories, empty config, no permissions key), apply_clean (removes redundant, adds wildcard, preserves deny/other fields, no changes) |
 | tiers | test_tiers.py | Tier definitions, ordering invariants, threshold relationships across tiers, get_tier_config, validate_tier |
 | setup_cmd | test_setup.py | Canonicals extraction, alias generation, file path extraction, config with resolvedCanonicals + fileAccess, full flow, user_config to lockfile, tier parameterization (cautious/balanced/flow config generation, domain cumulation) |
 | lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config, fileAccess merging, get_tier helper |
