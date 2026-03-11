@@ -48,15 +48,22 @@ Then inside Claude Code:
 
 The plugin's hooks are registered automatically via `hooks.json` -- no manual settings.json editing needed.
 
-### 2. Run Setup (Generate Config)
+### 2. Install the CLI & Run Setup
 
 ```bash
-# Install the CLI
+# Install the CLI (creates venv + installs the 'cleanline' command)
 cd clean-line
 uv sync
 
 # Run setup (scans your allow list, generates permission-config.json)
-cleanline setup
+uv run cleanline setup
+```
+
+To make `cleanline` available globally (outside the project venv):
+
+```bash
+uv tool install .          # installs 'cleanline' into ~/.local/bin
+cleanline setup            # now works from anywhere
 ```
 
 Setup will:
@@ -90,6 +97,8 @@ Run 'cleanline status' after a few sessions to see the impact.
 ### 3. Done
 
 Your next Claude Code session will have fewer permission prompts immediately. After a few sessions, run `cleanline status` or `cleanline suggest` to tune further.
+
+> **Note**: If you installed with `uv sync` (not `uv tool install`), prefix commands with `uv run`: `uv run cleanline status`. With `uv tool install .`, plain `cleanline` works from anywhere.
 
 ## CLI Commands
 
@@ -148,6 +157,25 @@ Scans your `settings.json` allow list for:
 - **Redundant file path entries**: `Read(src/main.py)` when `Read(src/**)` already exists (same-tool only)
 - **File path consolidations**: 2+ specific paths under the same directory → `Read(src/**)`
 - **Clean Line handled** (informational): entries also covered by alias rules
+
+### `export` -- Share your config as a profile
+
+```bash
+cleanline export --name my-rules --description "My Python dev rules"  # stdout
+cleanline export -o my-rules.json --name my-rules --description "My rules"  # file
+cleanline export --dry-run --name my-rules --description "Preview"  # preview
+cleanline export --include-write-paths --name my-rules --description "With writes"
+cleanline export --include-risky --name my-rules --description "Keep internal domains"
+cleanline export --exclude-pattern "*.internal.*" --name my-rules --description "Filtered"
+cleanline export --source https://github.com/me/repo --tags "python,data-science" --name my-rules --description "With meta"
+```
+
+Exports your local user rules as an installable profile JSON. By default:
+- Only exports your own rules (installed profiles are not re-exported)
+- Strips risky entries: internal domains (localhost, RFC1918, *.local, *.corp), absolute home paths
+- Excludes writePaths (use `--include-write-paths` to include)
+- Adds `meta.recommendedTier` from your current tier
+- Validates output against the profile schema
 
 ### `init` -- Add a community profile
 

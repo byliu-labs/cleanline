@@ -124,6 +124,7 @@ User aliases take priority over profile aliases on key conflict.
 |--------|---------------|
 | `tiers.py` | Trust tier definitions: `VALID_TIERS`, `TIER_ORDER`, `TIER_DEFAULTS` (domains, paths, mappings, suggest/tighten thresholds). Pure constants, no I/O |
 | `clean_cmd.py` | Allow list consolidation for Bash entries and file path entries (Read/Edit/Write/Glob/Grep): find redundant entries covered by existing wildcards (same-tool only for file paths), propose consolidations (specific entries → narrowest wildcard for Bash, parent-dir grouping for file paths), detect Clean Line handled entries (informational). Pure analysis (`analyze_allow_list`) + mutation (`apply_clean`) split. Atomic settings.json write |
+| `export_cmd.py` | Export user config as a shareable profile: risky entry detection (internal domains, absolute home paths), entry stripping, glob-based exclusion, profile assembly from user_config only (no resolvedCanonicals/denyPaths/installed profiles). Pure functions (`detect_risky_entries`, `strip_risky_entries`, `apply_exclude_patterns`, `build_profile`) + orchestrator (`run_export`). Atomic file write |
 | `cli.py` | Argument parsing, command dispatch, output formatting. Reads tier from lockfile for suggest/tighten defaults |
 | `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate tier-parameterized permission-config.json with resolvedCanonicals, save user_config (incl. tier) to lockfile |
 | `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run. Regenerates permission-config.json after mutations |
@@ -219,6 +220,8 @@ cleanline setup --yes                # Full setup, balanced (default), no prompt
 cleanline status                     # View profiles + tier + audit summary + allow list health
 cleanline clean --dry-run            # Analyze allow list without applying
 cleanline clean --yes                # Consolidate allow list, no prompts
+cleanline export --dry-run --name test --description "test"  # Preview export
+cleanline export -o profile.json --name test --description "test"  # Export to file
 cleanline suggest --apply            # Apply suggestions (tier-aware thresholds)
 cleanline tighten                    # Analyze stale rules (tier-aware staleness)
 cleanline tighten --apply            # Remove/suppress stale rules
@@ -270,6 +273,7 @@ cleanline tighten --apply            # Remove/suppress stale rules
 | resolve.py | test_resolve.py | Metacharacter detection, chain splitting, binary normalization, alias/mapping/direct-canonical resolution, no-chaining invariant, audit logging, first-run config, hostname parsing, domain matching |
 | resolve_fileops.py | test_resolve_fileops.py | Path normalization, extraction, pattern matching, .env recursive denial, symlink resolution, hardcoded deny, check_access, audit logging |
 | hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors, file ops (read/write/deny/symlink) |
+| export_cmd | test_export.py | Risky detection (localhost, IPs, RFC1918, *.internal/local/corp/private, absolute home paths, tilde OK, /tmp OK, public OK), strip risky (removes flagged, no mutation, noop empty, removes empty sections), exclude patterns (domain/alias/mapping/path, multiple, descriptions), build profile (structure, schema_version, recommendedTier, excludes writePaths default, includes when flagged, omits empty, meta provenance, no resolvedCanonicals/denyPaths/tier, validates via schema), run_export (writes file, stdout, dry-run, strips risky with warning, include-risky, exclude-pattern, no user_config error, interactive prompt, atomic write, writePaths warning) |
 | clean_cmd | test_clean.py | Bash redundancy (wildcard covers specific, bare cmd, multi-word, no cross-command), cleanline handled (alias + canonical wildcard, no canonical, specific entries), Bash consolidations (narrowest prefix, root prefix, min_group, skip wildcarded, multiple groups), file path redundancy (recursive/star wildcards, nested paths, same-tool only, no cross-tool, ext wildcard, multiple), file path consolidation (same dir, different tools no merge, different dirs, min_group, skip covered, wildcards not grouped, root files skipped, nested dir), analyze_allow_list (all categories incl. file paths, empty config, no permissions key), apply_clean (Bash + file path removals/consolidations, mixed, preserves deny/other) |
 | tiers | test_tiers.py | Tier definitions, ordering invariants, threshold relationships across tiers, get_tier_config, validate_tier |
 | setup_cmd | test_setup.py | Canonicals extraction, alias generation, file path extraction, config with resolvedCanonicals + fileAccess, full flow, user_config to lockfile, tier parameterization (cautious/balanced/flow config generation, domain cumulation) |
