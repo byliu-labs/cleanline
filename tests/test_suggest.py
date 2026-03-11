@@ -302,7 +302,7 @@ def test_group_passthroughs_file_paths() -> None:
 
 
 def test_group_passthroughs_file_tools() -> None:
-    """All file tools (Read, Edit, Write, Glob, Grep) should count."""
+    """Read tools go to file_paths, write tools go to write_file_paths."""
     events = (
         _make_events("Read", ["/src/a.py"])
         + _make_events("Edit", ["/src/b.py"])
@@ -311,8 +311,10 @@ def test_group_passthroughs_file_tools() -> None:
         + _make_events("Grep", ["/src"])
     )
     result = group_passthroughs(events)
-    paths = dict(result["file_paths"])
-    assert len(paths) == 4  # /src/a.py, /src/b.py, /src/c.py, /src
+    read_paths = dict(result["file_paths"])
+    write_paths = dict(result["write_file_paths"])
+    assert len(read_paths) == 2  # /src/a.py, /src (Read + Glob/Grep)
+    assert len(write_paths) == 2  # /src/b.py, /src/c.py (Edit + Write)
 
 
 def test_find_path_groups() -> None:
@@ -492,3 +494,126 @@ def test_generate_suggestions_explicit_min_count_overrides_tier() -> None:
     # Even on cautious tier, explicit min_count=1 should find suggestions
     result = generate_suggestions(events, min_count=1, tier="cautious")
     assert len(result["command_groups"]) >= 1
+
+
+# ============================================================================
+# WRITE PATH SEPARATION (suggest_write_min_count)
+# ============================================================================
+
+
+def test_group_passthroughs_separates_read_write() -> None:
+    """Edit/Write events go to write_file_paths, not file_paths."""
+    events = (
+        _make_events("Read", ["/src/a.py"] * 3)
+        + _make_events("Edit", ["/src/b.py"] * 4)
+        + _make_events("Write", ["/src/c.py"] * 2)
+        + _make_events("Glob", ["/src"] * 1)
+    )
+    result = group_passthroughs(events)
+    read_paths = dict(result["file_paths"])
+    write_paths = dict(result["write_file_paths"])
+
+    assert "/src/a.py" in read_paths
+    assert "/src" in read_paths
+    assert "/src/b.py" in write_paths
+    assert "/src/c.py" in write_paths
+    # Write paths should NOT be in read paths
+    assert "/src/b.py" not in read_paths
+    assert "/src/c.py" not in read_paths
+
+
+def test_generate_suggestions_write_paths_higher_threshold() -> None:
+    """Write paths below suggest_write_min_count but above suggest_min_count are not suggested."""
+    # Balanced tier: suggest_min_count=3, suggest_write_min_count=5
+    # Create 4 write events per path in same dir (total=4, above 3 but below 5)
+    events = (
+        _make_events("Edit", ["/proj/src/a.py"] * 2)
+        + _make_events("Write", ["/proj/src/b.py"] * 2)
+    )
+    result = generate_suggestions(events, tier="balanced")
+    # Total=4, above balanced suggest_min_count=3 but below suggest_write_min_count=5
+    assert len(result["write_path_groups"]) == 0
+
+    # Same events for read tools would be suggested
+    read_events = (
+        _make_events("Read", ["/proj/src/a.py"] * 2)
+        + _make_events("Glob", ["/proj/src/b.py"] * 2)
+    )
+    read_result = generate_suggestions(read_events, tier="balanced")
+    assert len(read_result["file_path_groups"]) >= 1
+
+
+def test_generate_suggestions_write_paths_above_threshold() -> None:
+    """Write paths above suggest_write_min_count are suggested with write-prefixed confidence."""
+    # Balanced: suggest_write_min_count=5
+    events = (
+        _make_events("Edit", ["/proj/src/a.py"] * 3)
+        + _make_events("Write", ["/proj/src/b.py"] * 3)
+    )
+    result = generate_suggestions(events, tier="balanced")
+    assert len(result["write_path_groups"]) >= 1
+    group = result["write_path_groups"][0]
+    assert group["access"] == "write"
+    assert group["confidence"].startswith("write-")
+
+
+def test_generate_suggestions_write_groups_have_access_label() -> None:
+    """Both read and write groups carry an access label."""
+    events = (
+        _make_events("Read", ["/proj/src/a.py"] * 3 + ["/proj/src/b.py"] * 3)
+        + _make_events("Edit", ["/proj/lib/x.py"] * 3 + ["/proj/lib/y.py"] * 3)
+    )
+    result = generate_suggestions(events, tier="balanced")
+    for group in result["file_path_groups"]:
+        assert group["access"] == "read"
+    for group in result["write_path_groups"]:
+        assert group["access"] == "write"
+
+
+def test_generate_suggestions_flow_write_threshold() -> None:
+    """Flow tier uses suggest_write_min_count=3 for write paths."""
+    events = (
+        _make_events("Edit", ["/proj/src/a.py"] * 2)
+        + _make_events("Write", ["/proj/src/b.py"] * 2)
+    )
+    # Total=4, flow write threshold=3
+    flow_result = generate_suggestions(events, tier="flow")
+    assert len(flow_result["write_path_groups"]) >= 1
+    # Total=4, balanced write threshold=5
+    balanced_result = generate_suggestions(events, tier="balanced")
+    assert len(balanced_result["write_path_groups"]) == 0
+
+
+def test_apply_suggestions_adds_write_paths(tmp_path: Path) -> None:
+    from flow_state import lockfile as lockfile_mod
+
+    config_path = tmp_path / "permission-config.json"
+    lockfile_path = tmp_path / "profiles.lock.json"
+
+    lockfile_data = {
+        "profiles": [], "merged": {},
+        "user_config": {"fileAccess": {"readPaths": [], "writePaths": []}},
+    }
+    lockfile_mod.write_lockfile(lockfile_data, lockfile_path)
+
+    suggestions = {
+        "command_groups": [],
+        "domain_groups": [],
+        "file_path_groups": [],
+        "write_path_groups": [
+            {"pattern": "/proj/src/**", "paths": [("/proj/src/a.py", 5)],
+             "total": 5, "access": "write", "confidence": "write-medium"}
+        ],
+    }
+
+    with (
+        patch("builtins.input", return_value="y"),
+        patch.object(lockfile_mod, "get_lockfile_path", return_value=lockfile_path),
+    ):
+        result = apply_suggestions(suggestions, config_path)
+
+    assert not result["cancelled"]
+    assert any("write paths" in a for a in result["actions"])
+
+    data = lockfile_mod.read_lockfile(lockfile_path)
+    assert "/proj/src/**" in data["user_config"]["fileAccess"]["writePaths"]
