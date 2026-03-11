@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 # Add the scripts directory to the path so we can import resolve modules
-SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "clean-line" / "scripts"
+SCRIPTS_DIR = Path(__file__).parent.parent / "plugins" / "flow-state" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 import resolve

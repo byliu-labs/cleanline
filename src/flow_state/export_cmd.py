@@ -1,7 +1,7 @@
 """Export command: package user config as a shareable profile.
 
 Reads user_config from the lockfile and produces a profile JSON file
-that others can install via `cleanline init`. Default output is
+that others can install via `flowstate init`. Default output is
 public-safe: no internal domains, no writePaths, no absolute home paths.
 """
 from __future__ import annotations
@@ -193,7 +193,7 @@ def build_profile(
     """Assemble a profile dict from user_config.
 
     Only exports user's own config — not resolvedCanonicals, denyPaths,
-    cleanlineTier, or rules from installed profiles.
+    flowstateTier, or rules from installed profiles.
     """
     profile: dict = {
         "schema_version": 1,
@@ -270,7 +270,7 @@ def run_export(
     user_config = lockfile_data.get("user_config", {})
 
     if not user_config:
-        return {"errors": ["No user config found. Run 'cleanline setup' first."]}
+        return {"errors": ["No user config found. Run 'flowstate setup' first."]}
 
     tier = lockfile_mod.get_tier(lockfile_data)
 

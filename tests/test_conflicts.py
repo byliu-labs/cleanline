@@ -1,5 +1,5 @@
 """Tests for conflict detection."""
-from cleanline.conflicts import check_all_conflicts, detect_alias_conflicts, detect_mapping_conflicts
+from flow_state.conflicts import check_all_conflicts, detect_alias_conflicts, detect_mapping_conflicts
 
 
 def test_no_conflicts_same_value() -> None:

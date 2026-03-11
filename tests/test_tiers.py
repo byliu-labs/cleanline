@@ -1,7 +1,7 @@
 """Tests for the trust tier definitions."""
 import pytest
 
-from cleanline.tiers import (
+from flow_state.tiers import (
     DEFAULT_TIER,
     TIER_DEFAULTS,
     TIER_ORDER,

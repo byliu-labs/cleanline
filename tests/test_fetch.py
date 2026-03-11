@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from cleanline.fetch import (
+from flow_state.fetch import (
     build_github_url,
     fetch_local,
     fetch_profile,

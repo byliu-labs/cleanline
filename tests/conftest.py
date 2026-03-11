@@ -54,4 +54,4 @@ def sample_profile_b() -> dict:
 @pytest.fixture
 def hooks_dir() -> Path:
     """Path to the scripts directory."""
-    return Path(__file__).parent.parent / "plugins" / "clean-line" / "scripts"
+    return Path(__file__).parent.parent / "plugins" / "flow-state" / "scripts"

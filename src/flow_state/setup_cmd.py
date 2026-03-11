@@ -25,16 +25,16 @@ def _load_domains_for_tier(tier: str) -> list[str]:
     Balanced = cautious + 7 popular domains.
     Flow = balanced + 3 more domains.
     """
-    base = json.loads(pkg_files("cleanline").joinpath("known_domains.json").read_text())
+    base = json.loads(pkg_files("flow_state").joinpath("known_domains.json").read_text())
     if tier == "cautious":
         return base
     balanced_extras = json.loads(
-        pkg_files("cleanline").joinpath("known_domains_balanced.json").read_text()
+        pkg_files("flow_state").joinpath("known_domains_balanced.json").read_text()
     )
     if tier == "balanced":
         return base + balanced_extras
     flow_extras = json.loads(
-        pkg_files("cleanline").joinpath("known_domains_flow.json").read_text()
+        pkg_files("flow_state").joinpath("known_domains_flow.json").read_text()
     )
     return base + balanced_extras + flow_extras
 
@@ -48,7 +48,7 @@ FILE_ALLOW_PATTERN = re.compile(r"^(Read|Edit|Write|Glob|Grep)\((.+)\)$")
 
 def load_known_aliases() -> dict[str, list[str]]:
     """Load the curated alias mapping table."""
-    data_file = pkg_files("cleanline").joinpath("known_aliases.json")
+    data_file = pkg_files("flow_state").joinpath("known_aliases.json")
     return json.loads(data_file.read_text())
 
 
@@ -122,7 +122,7 @@ def generate_config(
     domains = _load_domains_for_tier(tier)
 
     config: dict = {
-        "cleanlineTier": tier,
+        "flowstateTier": tier,
         "webfetch": {"extraDomains": domains},
     }
     if aliases:
@@ -378,6 +378,6 @@ def run_setup(
             print(f"  + {action}")
         print()
         print("Done! Your next Claude Code session will have fewer permission prompts.")
-        print("Run 'cleanline status' after a few sessions to see the impact.")
+        print("Run 'flowstate status' after a few sessions to see the impact.")
 
     return result

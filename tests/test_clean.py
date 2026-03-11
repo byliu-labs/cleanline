@@ -2,10 +2,10 @@
 import json
 from pathlib import Path
 
-from cleanline.clean_cmd import (
+from flow_state.clean_cmd import (
     analyze_allow_list,
     apply_clean,
-    find_cleanline_handled,
+    find_flowstate_handled,
     find_consolidations,
     find_file_consolidations,
     find_redundant_entries,
@@ -73,44 +73,44 @@ def test_find_redundant_multi_word_wildcard() -> None:
 # ============================================================================
 
 
-def test_find_cleanline_handled_alias_exists() -> None:
+def test_find_flowstate_handled_alias_exists() -> None:
     allow = ["Bash(python3.12 *)", "Bash(python *)"]
     config = {"bashAliases": {"python3.12": "python"}}
-    result = find_cleanline_handled(allow, config)
+    result = find_flowstate_handled(allow, config)
     assert len(result) == 1
     assert result[0]["entry"] == "Bash(python3.12 *)"
     assert result[0]["canonical_entry"] == "Bash(python *)"
 
 
-def test_find_cleanline_handled_no_canonical_entry() -> None:
+def test_find_flowstate_handled_no_canonical_entry() -> None:
     allow = ["Bash(python3.12 *)"]
     config = {"bashAliases": {"python3.12": "python"}}
-    result = find_cleanline_handled(allow, config)
+    result = find_flowstate_handled(allow, config)
     assert len(result) == 0
 
 
-def test_find_cleanline_handled_not_in_removals() -> None:
+def test_find_flowstate_handled_not_in_removals() -> None:
     """Handled entries are separate from redundant entries."""
     allow = ["Bash(python3.12 *)", "Bash(python *)"]
     config = {"bashAliases": {"python3.12": "python"}}
-    handled = find_cleanline_handled(allow, config)
+    handled = find_flowstate_handled(allow, config)
     redundant = find_redundant_entries(allow)
     # python3.12 != python — different commands, not redundant
     assert len(handled) == 1
     assert len(redundant) == 0
 
 
-def test_find_cleanline_handled_no_aliases() -> None:
+def test_find_flowstate_handled_no_aliases() -> None:
     allow = ["Bash(python *)"]
-    result = find_cleanline_handled(allow, {})
+    result = find_flowstate_handled(allow, {})
     assert len(result) == 0
 
 
-def test_find_cleanline_handled_specific_entry() -> None:
+def test_find_flowstate_handled_specific_entry() -> None:
     """Specific entries are also detected, not just wildcards."""
     allow = ["Bash(python3.12 script.py)", "Bash(python *)"]
     config = {"bashAliases": {"python3.12": "python"}}
-    result = find_cleanline_handled(allow, config)
+    result = find_flowstate_handled(allow, config)
     assert len(result) == 1
     assert result[0]["entry"] == "Bash(python3.12 script.py)"
 

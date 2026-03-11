@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanline.tighten import (
+from flow_state.tighten import (
     apply_tighten_profile,
     apply_tighten_user,
     build_usage_map,
@@ -310,7 +310,7 @@ def test_select_rules_to_remove_returns_all() -> None:
 
 
 def test_apply_tighten_user_removes_aliases(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -342,7 +342,7 @@ def test_apply_tighten_user_removes_aliases(tmp_path: Path) -> None:
 
 
 def test_apply_tighten_user_removes_domains(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -372,7 +372,7 @@ def test_apply_tighten_user_removes_domains(tmp_path: Path) -> None:
 
 
 def test_apply_tighten_user_removes_file_paths(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -411,7 +411,7 @@ def test_apply_tighten_user_removes_file_paths(tmp_path: Path) -> None:
 
 
 def test_apply_tighten_user_removes_mappings(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -544,8 +544,8 @@ def test_find_stale_rules_active_counts() -> None:
 
 def test_cmd_tighten_refuses_apply_insufficient_data(capsys: object) -> None:
     """--apply without --force when data < 7 days should refuse."""
-    from cleanline.cli import cmd_tighten
-    from cleanline import lockfile as lockfile_mod
+    from flow_state.cli import cmd_tighten
+    from flow_state import lockfile as lockfile_mod
 
     events = [
         _event("alias:python3.12->python", _ts(2)),
@@ -555,10 +555,10 @@ def test_cmd_tighten_refuses_apply_insufficient_data(capsys: object) -> None:
 
     args = argparse.Namespace(apply=True, days=30, force=False)
     with (
-        patch("cleanline.cli.audit_mod.read_audit_log", return_value=events),
-        patch("cleanline.cli._default_hooks_dir") as mock_dir,
+        patch("flow_state.cli.audit_mod.read_audit_log", return_value=events),
+        patch("flow_state.cli._default_hooks_dir") as mock_dir,
         patch.object(lockfile_mod, "get_lockfile_path") as mock_lf,
-        patch("cleanline.cli.lockfile_mod.read_lockfile", return_value={"profiles": [], "merged": {}}),
+        patch("flow_state.cli.lockfile_mod.read_lockfile", return_value={"profiles": [], "merged": {}}),
     ):
         import tempfile
         from pathlib import Path as P
@@ -577,8 +577,8 @@ def test_cmd_tighten_refuses_apply_insufficient_data(capsys: object) -> None:
 
 def test_cmd_tighten_allows_apply_with_force(capsys: object) -> None:
     """--apply --force when data < 7 days should proceed."""
-    from cleanline.cli import cmd_tighten
-    from cleanline import lockfile as lockfile_mod
+    from flow_state.cli import cmd_tighten
+    from flow_state import lockfile as lockfile_mod
 
     events = [
         _event("alias:python3.12->python", _ts(2)),
@@ -588,8 +588,8 @@ def test_cmd_tighten_allows_apply_with_force(capsys: object) -> None:
 
     args = argparse.Namespace(apply=True, days=30, force=True)
     with (
-        patch("cleanline.cli.audit_mod.read_audit_log", return_value=events),
-        patch("cleanline.cli._default_hooks_dir") as mock_dir,
+        patch("flow_state.cli.audit_mod.read_audit_log", return_value=events),
+        patch("flow_state.cli._default_hooks_dir") as mock_dir,
         patch.object(lockfile_mod, "get_lockfile_path") as mock_lf,
         patch("builtins.input", return_value="y"),
     ):

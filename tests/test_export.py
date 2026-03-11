@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanline.export_cmd import (
+from flow_state.export_cmd import (
     RISKY_DOMAIN_PATTERNS,
     apply_exclude_patterns,
     build_profile,
@@ -289,12 +289,12 @@ def test_build_profile_no_tier_field() -> None:
     uc = {"tier": "flow", "bashAliases": {"py": "python"}}
     p = build_profile(uc, "flow", name="test")
     assert "tier" not in p
-    assert "cleanlineTier" not in p
+    assert "flowstateTier" not in p
 
 
 def test_build_profile_validates_via_schema() -> None:
     """Built profiles should pass schema validation."""
-    from cleanline.schema import validate_profile
+    from flow_state.schema import validate_profile
     uc = {"bashAliases": {"py": "python"}, "webfetch": {"extraDomains": ["*.docs.rs"]}}
     p = build_profile(uc, "balanced", name="test", version="1.0.0")
     errors, _ = validate_profile(p)
@@ -321,7 +321,7 @@ def test_run_export_writes_file(tmp_path: Path) -> None:
     })
     output_path = tmp_path / "out.json"
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             output=str(output_path),
@@ -342,7 +342,7 @@ def test_run_export_stdout(tmp_path: Path, capsys) -> None:
         "bashAliases": {"py": "python"},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="my-profile",
@@ -361,7 +361,7 @@ def test_run_export_dry_run(tmp_path: Path) -> None:
         "bashAliases": {"py": "python"},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="test",
@@ -379,7 +379,7 @@ def test_run_export_strips_risky_with_warning(tmp_path: Path) -> None:
         "webfetch": {"extraDomains": ["localhost", "*.github.com"]},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="test",
@@ -401,7 +401,7 @@ def test_run_export_include_risky(tmp_path: Path) -> None:
         "webfetch": {"extraDomains": ["localhost"]},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="test",
@@ -421,7 +421,7 @@ def test_run_export_exclude_pattern(tmp_path: Path) -> None:
         "webfetch": {"extraDomains": ["*.internal.co", "*.github.com"]},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="test",
@@ -439,7 +439,7 @@ def test_run_export_exclude_pattern(tmp_path: Path) -> None:
 
 
 def test_run_export_no_user_config_error(tmp_path: Path) -> None:
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = {"profiles": [], "merged": {}}
         result = run_export(
             name="test",
@@ -455,7 +455,7 @@ def test_run_export_interactive_name_prompt(tmp_path: Path) -> None:
     lockfile_path = _make_lockfile(tmp_path, {"bashAliases": {"py": "python"}})
 
     with (
-        patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read,
+        patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read,
         patch("builtins.input", side_effect=["my-export", "desc"]),
     ):
         mock_read.return_value = json.loads(lockfile_path.read_text())
@@ -473,7 +473,7 @@ def test_run_export_atomic_write(tmp_path: Path) -> None:
     lockfile_path = _make_lockfile(tmp_path, {"bashAliases": {"py": "python"}})
     output_path = tmp_path / "out.json"
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         run_export(
             output=str(output_path),
@@ -492,7 +492,7 @@ def test_run_export_write_paths_warning(tmp_path: Path) -> None:
         "fileAccess": {"writePaths": ["/tmp/**"]},
     })
 
-    with patch("cleanline.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
         mock_read.return_value = json.loads(lockfile_path.read_text())
         result = run_export(
             name="test",

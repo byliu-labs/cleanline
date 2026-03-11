@@ -23,7 +23,7 @@ VERSION_PATTERN = re.compile(r"^(.+?)(\d+(?:\.\d+)*)$")
 
 def _load_known_aliases() -> dict[str, list[str]]:
     """Load the curated alias mapping table."""
-    data_file = pkg_files("cleanline").joinpath("known_aliases.json")
+    data_file = pkg_files("flow_state").joinpath("known_aliases.json")
     return json.loads(data_file.read_text())
 
 

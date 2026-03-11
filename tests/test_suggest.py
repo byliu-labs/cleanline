@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from cleanline.suggest import (
+from flow_state.suggest import (
     apply_suggestions,
     find_domain_groups,
     find_path_groups,
@@ -178,7 +178,7 @@ def test_cmd_suggest_shows_prompts_saved(capsys: object) -> None:
     """cmd_suggest should show 'prompts saved' in its output."""
     from unittest.mock import patch
     import argparse
-    from cleanline.cli import cmd_suggest
+    from flow_state.cli import cmd_suggest
 
     events = (
         _make_events("Bash", ["python3.12 x"] * 5 + ["python3.13 y"] * 3)
@@ -186,7 +186,7 @@ def test_cmd_suggest_shows_prompts_saved(capsys: object) -> None:
     )
 
     args = argparse.Namespace(apply=False)
-    with patch("cleanline.cli.audit_mod.read_audit_log", return_value=events):
+    with patch("flow_state.cli.audit_mod.read_audit_log", return_value=events):
         cmd_suggest(args)
 
     captured = capsys.readouterr()  # type: ignore[attr-defined]
@@ -200,7 +200,7 @@ def test_cmd_suggest_shows_prompts_saved(capsys: object) -> None:
 
 
 def test_apply_suggestions_adds_aliases(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -235,7 +235,7 @@ def test_apply_suggestions_adds_aliases(tmp_path: Path) -> None:
 
 
 def test_apply_suggestions_adds_domains(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -265,7 +265,7 @@ def test_apply_suggestions_adds_domains(tmp_path: Path) -> None:
 
 
 def test_apply_suggestions_cancelled(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -357,7 +357,7 @@ def test_generate_suggestions_top_file_paths() -> None:
 
 
 def test_apply_suggestions_adds_read_paths(tmp_path: Path) -> None:
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -391,7 +391,7 @@ def test_apply_suggestions_adds_read_paths(tmp_path: Path) -> None:
 
 def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:
     """Should not add aliases that already exist in user_config."""
-    from cleanline import lockfile as lockfile_mod
+    from flow_state import lockfile as lockfile_mod
 
     config_path = tmp_path / "permission-config.json"
     lockfile_path = tmp_path / "profiles.lock.json"
@@ -435,7 +435,7 @@ def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:
 
 def test_confidence_label_cautious_uses_higher_thresholds() -> None:
     """Cautious tier requires more hits for high confidence."""
-    from cleanline.suggest import _confidence_label
+    from flow_state.suggest import _confidence_label
 
     # 10 hits: high in balanced, but medium in cautious (needs 15 for high)
     assert _confidence_label(10, tier="balanced") == "high"
@@ -444,7 +444,7 @@ def test_confidence_label_cautious_uses_higher_thresholds() -> None:
 
 def test_confidence_label_flow_uses_lower_thresholds() -> None:
     """Flow tier needs fewer hits for high confidence."""
-    from cleanline.suggest import _confidence_label
+    from flow_state.suggest import _confidence_label
 
     # 7 hits: medium in balanced, high in flow
     assert _confidence_label(7, tier="balanced") == "medium"

@@ -1,5 +1,5 @@
 """Tests for profile schema validation."""
-from cleanline.schema import MAX_ALIASES, MAX_DOMAINS, MAX_FILE_PATHS, MAX_MAPPINGS, validate_profile
+from flow_state.schema import MAX_ALIASES, MAX_DOMAINS, MAX_FILE_PATHS, MAX_MAPPINGS, validate_profile
 
 
 def test_valid_profile_passes(sample_profile: dict) -> None:

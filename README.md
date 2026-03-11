@@ -1,6 +1,6 @@
-# Clean Line
+# Flow State
 
-Take the clean line. Permission hooks that reduce Claude Code prompt fatigue, with a CLI for managing composable community profiles.
+Get into flow state. Permission hooks that reduce Claude Code prompt fatigue, with a CLI for managing composable community profiles.
 
 ## The Problem
 
@@ -28,22 +28,22 @@ These hooks auto-approve safe, predictable operations so you can stay in flow.
 
 ```bash
 # Launch Claude Code with the plugin loaded from a local directory
-claude --plugin-dir /path/to/clean-line/plugins/clean-line
+claude --plugin-dir /path/to/flow-state/plugins/flow-state
 ```
 
 **Option B: Permanent installation via marketplace**
 
 ```bash
 # Clone the repo
-git clone https://github.com/asherliu/clean-line.git
-cd clean-line
+git clone https://github.com/asherliu/flow-state.git
+cd flow-state
 ```
 
 Then inside Claude Code:
 
 ```
-/plugin marketplace add /path/to/clean-line
-/plugin install clean-line@claude-code-hooks
+/plugin marketplace add /path/to/flow-state
+/plugin install flow-state@claude-code-hooks
 ```
 
 The plugin's hooks are registered automatically via `hooks.json` -- no manual settings.json editing needed.
@@ -51,19 +51,19 @@ The plugin's hooks are registered automatically via `hooks.json` -- no manual se
 ### 2. Install the CLI & Run Setup
 
 ```bash
-# Install the CLI (creates venv + installs the 'cleanline' command)
-cd clean-line
+# Install the CLI (creates venv + installs the 'flowstate' command)
+cd flow-state
 uv sync
 
 # Run setup (scans your allow list, generates permission-config.json)
-uv run cleanline setup
+uv run flowstate setup
 ```
 
-To make `cleanline` available globally (outside the project venv):
+To make `flowstate` available globally (outside the project venv):
 
 ```bash
-uv tool install .          # installs 'cleanline' into ~/.local/bin
-cleanline setup            # now works from anywhere
+uv tool install .          # installs 'flowstate' into ~/.local/bin
+flowstate setup            # now works from anywhere
 ```
 
 Setup will:
@@ -91,33 +91,33 @@ Proceed? [Y/n] y
   + saved user_config to lockfile
 
 Done! Your next Claude Code session will have fewer permission prompts.
-Run 'cleanline status' after a few sessions to see the impact.
+Run 'flowstate status' after a few sessions to see the impact.
 ```
 
 ### 3. Done
 
-Your next Claude Code session will have fewer permission prompts immediately. After a few sessions, run `cleanline status` or `cleanline suggest` to tune further.
+Your next Claude Code session will have fewer permission prompts immediately. After a few sessions, run `flowstate status` or `flowstate suggest` to tune further.
 
-> **Note**: If you installed with `uv sync` (not `uv tool install`), prefix commands with `uv run`: `uv run cleanline status`. With `uv tool install .`, plain `cleanline` works from anywhere.
+> **Note**: If you installed with `uv sync` (not `uv tool install`), prefix commands with `uv run`: `uv run flowstate status`. With `uv tool install .`, plain `flowstate` works from anywhere.
 
 ## CLI Commands
 
 ### `setup` -- First-time onboarding
 
 ```bash
-cleanline setup                    # Interactive setup (balanced tier)
-cleanline setup --tier cautious    # Conservative: docs domains only, minimal file access
-cleanline setup --tier balanced    # Default: popular domains, common mappings, /tmp write
-cleanline setup --tier flow        # Permissive: broad domains, many mappings, ~/Documents write
-cleanline setup --yes              # Skip confirmation (scripting)
-cleanline setup --dry-run          # Preview without writing
-cleanline setup --profile github:user/repo  # Also install a profile
+flowstate setup                    # Interactive setup (balanced tier)
+flowstate setup --tier cautious    # Conservative: docs domains only, minimal file access
+flowstate setup --tier balanced    # Default: popular domains, common mappings, /tmp write
+flowstate setup --tier flow        # Permissive: broad domains, many mappings, ~/Documents write
+flowstate setup --yes              # Skip confirmation (scripting)
+flowstate setup --dry-run          # Preview without writing
+flowstate setup --profile github:user/repo  # Also install a profile
 ```
 
 ### `status` -- See what's installed and how it's performing
 
 ```bash
-cleanline status
+flowstate status
 ```
 
 Shows: current tier, installed profiles, audit summary (allow/passthrough counts), top auto-approved rules, top passthrough candidates.
@@ -125,9 +125,9 @@ Shows: current tier, installed profiles, audit summary (allow/passthrough counts
 ### `suggest` -- Get config recommendations from your usage
 
 ```bash
-cleanline suggest            # Show suggestions
-cleanline suggest --apply    # Apply suggestions interactively
-cleanline suggest --min-count 5  # Only suggest groups with 5+ occurrences
+flowstate suggest            # Show suggestions
+flowstate suggest --apply    # Apply suggestions interactively
+flowstate suggest --min-count 5  # Only suggest groups with 5+ occurrences
 ```
 
 Analyzes your audit log to find patterns: versioned commands that should be aliased, domain groups that should be wildcarded. Suggestions are ranked by confidence (high/medium/low). Thresholds are tier-aware: cautious requires more evidence, flow suggests sooner.
@@ -135,10 +135,10 @@ Analyzes your audit log to find patterns: versioned commands that should be alia
 ### `tighten` -- Remove stale permission rules (least privilege)
 
 ```bash
-cleanline tighten              # Analyze and show stale rule candidates
-cleanline tighten --apply      # Remove/suppress stale rules interactively
-cleanline tighten --days 60    # Custom staleness window (default: tier-dependent)
-cleanline tighten --apply --force  # Override the minimum data requirement
+flowstate tighten              # Analyze and show stale rule candidates
+flowstate tighten --apply      # Remove/suppress stale rules interactively
+flowstate tighten --days 60    # Custom staleness window (default: tier-dependent)
+flowstate tighten --apply --force  # Override the minimum data requirement
 ```
 
 The complement to `suggest`. Analyzes your audit log to find rules that haven't triggered recently. User rules are removed directly; profile rules are suppressed via overrides.
@@ -146,9 +146,9 @@ The complement to `suggest`. Analyzes your audit log to find rules that haven't 
 ### `clean` -- Consolidate your allow list
 
 ```bash
-cleanline clean              # Analyze and apply consolidations interactively
-cleanline clean --dry-run    # Preview without applying
-cleanline clean --yes        # Apply without prompting
+flowstate clean              # Analyze and apply consolidations interactively
+flowstate clean --dry-run    # Preview without applying
+flowstate clean --yes        # Apply without prompting
 ```
 
 Scans your `settings.json` allow list for:
@@ -156,18 +156,18 @@ Scans your `settings.json` allow list for:
 - **Bash consolidations**: 3+ specific entries like `Bash(git log)`, `Bash(git status)`, `Bash(git diff)` → `Bash(git *)`
 - **Redundant file path entries**: `Read(src/main.py)` when `Read(src/**)` already exists (same-tool only)
 - **File path consolidations**: 2+ specific paths under the same directory → `Read(src/**)`
-- **Clean Line handled** (informational): entries also covered by alias rules
+- **Flow State handled** (informational): entries also covered by alias rules
 
 ### `export` -- Share your config as a profile
 
 ```bash
-cleanline export --name my-rules --description "My Python dev rules"  # stdout
-cleanline export -o my-rules.json --name my-rules --description "My rules"  # file
-cleanline export --dry-run --name my-rules --description "Preview"  # preview
-cleanline export --include-write-paths --name my-rules --description "With writes"
-cleanline export --include-risky --name my-rules --description "Keep internal domains"
-cleanline export --exclude-pattern "*.internal.*" --name my-rules --description "Filtered"
-cleanline export --source https://github.com/me/repo --tags "python,data-science" --name my-rules --description "With meta"
+flowstate export --name my-rules --description "My Python dev rules"  # stdout
+flowstate export -o my-rules.json --name my-rules --description "My rules"  # file
+flowstate export --dry-run --name my-rules --description "Preview"  # preview
+flowstate export --include-write-paths --name my-rules --description "With writes"
+flowstate export --include-risky --name my-rules --description "Keep internal domains"
+flowstate export --exclude-pattern "*.internal.*" --name my-rules --description "Filtered"
+flowstate export --source https://github.com/me/repo --tags "python,data-science" --name my-rules --description "With meta"
 ```
 
 Exports your local user rules as an installable profile JSON. By default:
@@ -180,21 +180,21 @@ Exports your local user rules as an installable profile JSON. By default:
 ### `init` -- Add a community profile
 
 ```bash
-cleanline init github:user/rust-profile
-cleanline init local:path/to/profile.json
+flowstate init github:user/rust-profile
+flowstate init local:path/to/profile.json
 ```
 
 ### `dry-run` -- Preview a profile without installing
 
 ```bash
-cleanline dry-run github:user/new-profile
+flowstate dry-run github:user/new-profile
 ```
 
 ### `update` / `remove` -- Manage profiles
 
 ```bash
-cleanline update             # Update all profiles
-cleanline remove rust-profile
+flowstate update             # Update all profiles
+flowstate remove rust-profile
 ```
 
 ## How It Works
@@ -203,7 +203,7 @@ cleanline remove rust-profile
 
 ```
 Plugin (single-process)              CLI (management)
-  bash-gate.sh (thin dispatcher)       cleanline setup / suggest / tighten
+  bash-gate.sh (thin dispatcher)       flowstate setup / suggest / tighten
   resolve.py (all Bash logic)          writes to lockfile user_config
   resolve_webfetch.py (WebFetch)       generates permission-config.json
   resolve_fileops.py (file ops)
@@ -279,7 +279,7 @@ Symlinks are resolved before matching -- a symlink pointing to `~/.ssh/id_rsa` i
 
 ### Trust Tiers
 
-Three tiers control what `cleanline setup` generates. Tiers are metadata — they set starting points, not enforcement limits.
+Three tiers control what `flowstate setup` generates. Tiers are metadata — they set starting points, not enforcement limits.
 
 | | Cautious | Balanced (default) | Flow |
 |---|---|---|---|
@@ -333,26 +333,26 @@ Profiles can also declare file access paths:
 }
 ```
 
-Multiple profiles merge: domains are unioned, aliases are merged (user config takes priority on conflict), mappings are unioned per canonical, readPaths are unioned. Profile `writePaths` require explicit user opt-in during `cleanline init`. Profile caps: 50 aliases, 30 mappings, 50 domains, 50 file paths per sub-key.
+Multiple profiles merge: domains are unioned, aliases are merged (user config takes priority on conflict), mappings are unioned per canonical, readPaths are unioned. Profile `writePaths` require explicit user opt-in during `flowstate init`. Profile caps: 50 aliases, 30 mappings, 50 domains, 50 file paths per sub-key.
 
 ### Profile Overrides
 
 Suppress individual profile rules without removing the entire profile:
 
 ```bash
-cleanline tighten --apply  # Creates overrides for stale profile rules
+flowstate tighten --apply  # Creates overrides for stale profile rules
 ```
 
-Overrides persist across `cleanline update`. When a profile author removes a rule you've already suppressed, the override is auto-cleaned (convergence detection).
+Overrides persist across `flowstate update`. When a profile author removes a rule you've already suppressed, the override is auto-cleaned (convergence detection).
 
 ## Customization
 
 ### Adding Custom Aliases
 
-Use `cleanline suggest --apply` to let the CLI recommend aliases based on your usage, or manually edit via the lockfile:
+Use `flowstate suggest --apply` to let the CLI recommend aliases based on your usage, or manually edit via the lockfile:
 
 ```bash
-cleanline suggest --apply
+flowstate suggest --apply
 ```
 
 ### Adding Custom Domains

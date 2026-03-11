@@ -1,5 +1,5 @@
 [project]
-name = "cleanline"
+name = "flow-state"
 version = "0.1.0"
 description = "CLI for managing composable community permission profiles for Claude Code hooks"
 readme = "README.md"
@@ -11,7 +11,7 @@ dependencies = []
 license = "MIT"
 
 [project.scripts]
-cleanline = "cleanline.cli:main"
+flowstate = "flow_state.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.10.8,<0.11.0"]
