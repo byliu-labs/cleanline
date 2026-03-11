@@ -505,6 +505,30 @@ def test_run_export_write_paths_warning(tmp_path: Path) -> None:
     assert any("writePaths excluded" in w for w in warnings)
 
 
+def test_build_profile_tier_override() -> None:
+    """Tier override sets meta.recommendedTier regardless of actual tier."""
+    uc = {"bashAliases": {"py": "python"}}
+    p = build_profile(uc, "cautious", name="test")
+    assert p["meta"]["recommendedTier"] == "cautious"
+
+
+def test_run_export_tier_override(tmp_path: Path) -> None:
+    """--tier flag overrides the lockfile tier in output."""
+    lockfile_path = _make_lockfile(tmp_path, {"bashAliases": {"py": "python"}}, tier="flow")
+
+    with patch("flow_state.export_cmd.lockfile_mod.read_lockfile") as mock_read:
+        mock_read.return_value = json.loads(lockfile_path.read_text())
+        result = run_export(
+            name="test",
+            description="test",
+            tier_override="cautious",
+            dry_run=True,
+            interactive=False,
+        )
+
+    assert result["profile"]["meta"]["recommendedTier"] == "cautious"
+
+
 def test_build_profile_custom_version() -> None:
     """Custom version should override the default."""
     uc = {"bashAliases": {"py": "python"}}

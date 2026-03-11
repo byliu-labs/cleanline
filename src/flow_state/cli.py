@@ -267,6 +267,7 @@ def cmd_export(args: argparse.Namespace) -> int:
         name=args.name,
         description=args.description,
         version=args.version,
+        tier_override=getattr(args, "tier", None),
         exclude_patterns=args.exclude_pattern or None,
         include_write_paths=args.include_write_paths,
         include_risky=args.include_risky,
@@ -578,6 +579,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_export.add_argument("--name", help="Profile name")
     p_export.add_argument("--description", help="Profile description")
     p_export.add_argument("--version", help="Profile version (default: 1.0.0)")
+    p_export.add_argument("--tier", choices=sorted(VALID_TIERS),
+                          help="Override meta.recommendedTier (default: your current tier)")
     p_export.add_argument("--exclude-pattern", action="append",
                           help="Glob to exclude entries (repeatable)")
     p_export.add_argument("--include-write-paths", action="store_true",

@@ -253,6 +253,7 @@ def run_export(
     name: str | None = None,
     description: str | None = None,
     version: str | None = None,
+    tier_override: str | None = None,
     exclude_patterns: list[str] | None = None,
     include_write_paths: bool = False,
     include_risky: bool = False,
@@ -273,7 +274,7 @@ def run_export(
     if not user_config:
         return {"errors": ["No user config found. Run 'flowstate setup' first."]}
 
-    tier = lockfile_mod.get_tier(lockfile_data)
+    tier = tier_override if tier_override else lockfile_mod.get_tier(lockfile_data)
 
     # Prompt for name/description if interactive and not provided
     if name is None:
