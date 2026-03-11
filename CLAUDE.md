@@ -139,7 +139,6 @@ User aliases take priority over profile aliases on key conflict.
 | `known_domains.json` | Cautious-tier documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
 | `known_domains_balanced.json` | Additional balanced-tier domains: *.stackoverflow.com, *.npmjs.com, *.mozilla.org, etc. |
 | `known_domains_flow.json` | Additional flow-tier domains: *.medium.com, *.dev.to, *.arxiv.org |
-| `known_file_paths.json` | Legacy file access paths (superseded by tier table in `tiers.py` for setup) |
 
 ### Plugin Scripts (plugins/flow-state/scripts/)
 
