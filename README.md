@@ -134,6 +134,21 @@ cleanline tighten --apply --force  # Override the minimum data requirement
 
 The complement to `suggest`. Analyzes your audit log to find rules that haven't triggered recently. User rules are removed directly; profile rules are suppressed via overrides.
 
+### `clean` -- Consolidate your allow list
+
+```bash
+cleanline clean              # Analyze and apply consolidations interactively
+cleanline clean --dry-run    # Preview without applying
+cleanline clean --yes        # Apply without prompting
+```
+
+Scans your `settings.json` allow list for:
+- **Redundant Bash entries**: `Bash(git log)` when `Bash(git *)` already exists
+- **Bash consolidations**: 3+ specific entries like `Bash(git log)`, `Bash(git status)`, `Bash(git diff)` → `Bash(git *)`
+- **Redundant file path entries**: `Read(src/main.py)` when `Read(src/**)` already exists (same-tool only)
+- **File path consolidations**: 2+ specific paths under the same directory → `Read(src/**)`
+- **Clean Line handled** (informational): entries also covered by alias rules
+
 ### `init` -- Add a community profile
 
 ```bash

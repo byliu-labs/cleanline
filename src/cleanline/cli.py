@@ -158,11 +158,19 @@ def cmd_status(args: argparse.Namespace) -> int:
             analysis = clean_mod.analyze_allow_list(allow_list, config)
             redundant = analysis["redundant"]
             handled = analysis["handled"]
-            if redundant or handled:
+            file_redundant = analysis["file_redundant"]
+            file_consolidations = analysis["file_consolidations"]
+            has_issues = redundant or handled or file_redundant or file_consolidations
+            if has_issues:
                 print("\nAllow List Health")
                 print("=================")
                 if redundant:
-                    print(f"  {len(redundant)} redundant entries found")
+                    print(f"  {len(redundant)} redundant Bash entries found")
+                if file_redundant:
+                    print(f"  {len(file_redundant)} redundant file path entries found")
+                if file_consolidations:
+                    total = sum(len(c["entries"]) for c in file_consolidations)
+                    print(f"  {total} file path entries can be consolidated")
                 if handled:
                     print(f"  {len(handled)} entries also handled by Clean Line aliases")
                 print("  Run 'cleanline clean' to consolidate.")
@@ -188,16 +196,31 @@ def cmd_clean(args: argparse.Namespace) -> int:
     redundant = analysis["redundant"]
     consolidations = analysis["consolidations"]
     handled = analysis["handled"]
+    file_redundant = analysis["file_redundant"]
+    file_consolidations = analysis["file_consolidations"]
 
-    # Print analysis
+    # Print Bash analysis
     if redundant:
-        print(f"\nRedundant entries ({len(redundant)}):")
+        print(f"\nRedundant Bash entries ({len(redundant)}):")
         for r in redundant:
             print(f"  {r['entry']}  (covered by {r['covered_by']})")
 
     if consolidations:
-        print(f"\nConsolidation opportunities ({len(consolidations)}):")
+        print(f"\nBash consolidation opportunities ({len(consolidations)}):")
         for c in consolidations:
+            print(f"  {c['proposed']}  (replaces {len(c['entries'])} entries)")
+            for e in c["entries"]:
+                print(f"    - {e}")
+
+    # Print file path analysis
+    if file_redundant:
+        print(f"\nRedundant file path entries ({len(file_redundant)}):")
+        for r in file_redundant:
+            print(f"  {r['entry']}  (covered by {r['covered_by']})")
+
+    if file_consolidations:
+        print(f"\nFile path consolidation opportunities ({len(file_consolidations)}):")
+        for c in file_consolidations:
             print(f"  {c['proposed']}  (replaces {len(c['entries'])} entries)")
             for e in c["entries"]:
                 print(f"    - {e}")
@@ -207,7 +230,8 @@ def cmd_clean(args: argparse.Namespace) -> int:
         for h in handled:
             print(f"  {h['entry']}  (alias: {h['alias']})")
 
-    if not redundant and not consolidations:
+    has_changes = redundant or consolidations or file_redundant or file_consolidations
+    if not has_changes:
         print("\nNothing to clean — allow list is already lean.")
         return 0
 
@@ -224,7 +248,10 @@ def cmd_clean(args: argparse.Namespace) -> int:
         if answer not in ("", "y", "yes"):
             return 0
 
-    result = clean_mod.apply_clean(settings_path, redundant, consolidations)
+    result = clean_mod.apply_clean(
+        settings_path, redundant, consolidations,
+        file_redundant, file_consolidations,
+    )
     for action in result["actions"]:
         print(f"  + {action}")
 
