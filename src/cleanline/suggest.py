@@ -11,7 +11,10 @@ from collections import Counter
 from importlib.resources import files as pkg_files
 from pathlib import Path
 
+from .tiers import DEFAULT_TIER, get_tier_config
+
 # Minimum total passthrough count to include in suggestions
+# (backward-compatible default; actual value comes from tier when available)
 MIN_SUGGEST_COUNT = 3
 
 # Common version suffixes to group (e.g., python3.10, python3.11 → python3.*)
@@ -74,11 +77,12 @@ def group_passthroughs(events: list[dict]) -> dict[str, list[tuple[str, int]]]:
     }
 
 
-def _confidence_label(total: int) -> str:
-    """Assign confidence label based on total passthrough count."""
-    if total >= 10:
+def _confidence_label(total: int, tier: str = DEFAULT_TIER) -> str:
+    """Assign confidence label using tier-appropriate thresholds."""
+    cfg = get_tier_config(tier)
+    if total >= cfg["suggest_confidence_high"]:
         return "high"
-    if total >= 5:
+    if total >= cfg["suggest_confidence_medium"]:
         return "medium"
     return "low"
 
@@ -86,6 +90,7 @@ def _confidence_label(total: int) -> str:
 def find_version_groups(
     commands: list[tuple[str, int]],
     min_count: int = MIN_SUGGEST_COUNT,
+    tier: str = DEFAULT_TIER,
 ) -> list[dict]:
     """Identify commands that are variants of the same canonical tool.
 
@@ -125,7 +130,7 @@ def find_version_groups(
                 "canonical": base,
                 "variants": variants,
                 "total": total,
-                "confidence": _confidence_label(total),
+                "confidence": _confidence_label(total, tier),
             })
 
     result.sort(key=lambda g: g["total"], reverse=True)
@@ -135,6 +140,7 @@ def find_version_groups(
 def find_domain_groups(
     domains: list[tuple[str, int]],
     min_count: int = MIN_SUGGEST_COUNT,
+    tier: str = DEFAULT_TIER,
 ) -> list[dict]:
     """Group subdomains under common apex domains.
 
@@ -161,7 +167,7 @@ def find_domain_groups(
                 "pattern": f"*.{apex}",
                 "subdomains": subs,
                 "total": total,
-                "confidence": _confidence_label(total),
+                "confidence": _confidence_label(total, tier),
             })
 
     result.sort(key=lambda g: g["total"], reverse=True)
@@ -171,6 +177,7 @@ def find_domain_groups(
 def find_path_groups(
     file_paths: list[tuple[str, int]],
     min_count: int = MIN_SUGGEST_COUNT,
+    tier: str = DEFAULT_TIER,
 ) -> list[dict]:
     """Group file paths by common directory prefix.
 
@@ -197,7 +204,7 @@ def find_path_groups(
                 "pattern": f"{parent_dir}/**",
                 "paths": paths,
                 "total": total,
-                "confidence": _confidence_label(total),
+                "confidence": _confidence_label(total, tier),
             })
 
     result.sort(key=lambda g: g["total"], reverse=True)
@@ -206,9 +213,12 @@ def find_path_groups(
 
 def generate_suggestions(
     events: list[dict],
-    min_count: int = MIN_SUGGEST_COUNT,
+    min_count: int | None = None,
+    tier: str = DEFAULT_TIER,
 ) -> dict:
     """Analyze audit events and generate config suggestions.
+
+    When min_count is None, uses the tier's default threshold.
 
     Returns:
       {
@@ -218,12 +228,20 @@ def generate_suggestions(
         "top_domains": [...],      # ungrouped top domains
       }
     """
+    cfg = get_tier_config(tier)
+    effective_min = min_count if min_count is not None else cfg["suggest_min_count"]
     grouped = group_passthroughs(events)
 
     return {
-        "command_groups": find_version_groups(grouped["commands"], min_count=min_count),
-        "domain_groups": find_domain_groups(grouped["domains"], min_count=min_count),
-        "file_path_groups": find_path_groups(grouped.get("file_paths", []), min_count=min_count),
+        "command_groups": find_version_groups(
+            grouped["commands"], min_count=effective_min, tier=tier,
+        ),
+        "domain_groups": find_domain_groups(
+            grouped["domains"], min_count=effective_min, tier=tier,
+        ),
+        "file_path_groups": find_path_groups(
+            grouped.get("file_paths", []), min_count=effective_min, tier=tier,
+        ),
         "top_commands": grouped["commands"][:10],
         "top_domains": grouped["domains"][:10],
         "top_file_paths": grouped.get("file_paths", [])[:10],

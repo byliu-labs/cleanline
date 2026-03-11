@@ -1,0 +1,9 @@
+[
+  "*.github.com",
+  "*.githubusercontent.com",
+  "*.python.org",
+  "*.readthedocs.io",
+  "*.stackoverflow.com",
+  "*.npmjs.com",
+  "*.mozilla.org"
+]

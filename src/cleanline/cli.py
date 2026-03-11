@@ -8,6 +8,7 @@ Commands:
   status             Show installed profiles and audit summary
   suggest            Propose config changes from audit data
   tighten            Identify and remove stale permission rules
+  clean              Consolidate settings.json allow list
   update [name]      Re-fetch and update profiles
   remove <name>      Remove a profile
   dry-run <source>   Show what a profile would change without applying
@@ -25,6 +26,8 @@ from . import suggest as suggest_mod
 from . import audit as audit_mod
 from . import tighten as tighten_mod
 from . import lockfile as lockfile_mod
+from . import clean_cmd as clean_mod
+from .tiers import DEFAULT_TIER, VALID_TIERS, get_tier_config
 
 
 def _print_json(data: dict) -> None:
@@ -77,6 +80,7 @@ def cmd_setup(args: argparse.Namespace) -> int:
 
     result = setup_cmd.run_setup(
         config_dir,
+        tier=args.tier,
         profile_source=args.profile,
         dry_run=args.dry_run,
         auto_yes=args.yes,
@@ -99,6 +103,11 @@ def cmd_init(args: argparse.Namespace) -> int:
 def cmd_status(args: argparse.Namespace) -> int:
     """Run the status command."""
     result = profile_ops.get_status()
+
+    # Show tier
+    lockfile_data = lockfile_mod.read_lockfile()
+    tier = lockfile_mod.get_tier(lockfile_data)
+    print(f"\nTrust Tier: {tier}")
 
     print("\nInstalled Profiles")
     print("==================")
@@ -140,6 +149,112 @@ def cmd_status(args: argparse.Namespace) -> int:
         for rule, count in top_pass:
             print(f"  {rule}: {count}")
 
+    # Allow list health
+    settings_path = setup_cmd.find_settings_path()
+    if settings_path:
+        allow_list = setup_cmd.parse_allow_list(settings_path)
+        if allow_list:
+            config = _load_permission_config()
+            analysis = clean_mod.analyze_allow_list(allow_list, config)
+            redundant = analysis["redundant"]
+            handled = analysis["handled"]
+            file_redundant = analysis["file_redundant"]
+            file_consolidations = analysis["file_consolidations"]
+            has_issues = redundant or handled or file_redundant or file_consolidations
+            if has_issues:
+                print("\nAllow List Health")
+                print("=================")
+                if redundant:
+                    print(f"  {len(redundant)} redundant Bash entries found")
+                if file_redundant:
+                    print(f"  {len(file_redundant)} redundant file path entries found")
+                if file_consolidations:
+                    total = sum(len(c["entries"]) for c in file_consolidations)
+                    print(f"  {total} file path entries can be consolidated")
+                if handled:
+                    print(f"  {len(handled)} entries also handled by Clean Line aliases")
+                print("  Run 'cleanline clean' to consolidate.")
+
+    return 0
+
+
+def cmd_clean(args: argparse.Namespace) -> int:
+    """Consolidate settings.json allow list."""
+    settings_path = setup_cmd.find_settings_path()
+    if settings_path is None:
+        print("Cannot find ~/.claude/settings.json")
+        return 1
+
+    allow_list = setup_cmd.parse_allow_list(settings_path)
+    if not allow_list:
+        print("\nNothing to clean — allow list is empty")
+        return 0
+
+    config = _load_permission_config()
+    analysis = clean_mod.analyze_allow_list(allow_list, config)
+
+    redundant = analysis["redundant"]
+    consolidations = analysis["consolidations"]
+    handled = analysis["handled"]
+    file_redundant = analysis["file_redundant"]
+    file_consolidations = analysis["file_consolidations"]
+
+    # Print Bash analysis
+    if redundant:
+        print(f"\nRedundant Bash entries ({len(redundant)}):")
+        for r in redundant:
+            print(f"  {r['entry']}  (covered by {r['covered_by']})")
+
+    if consolidations:
+        print(f"\nBash consolidation opportunities ({len(consolidations)}):")
+        for c in consolidations:
+            print(f"  {c['proposed']}  (replaces {len(c['entries'])} entries)")
+            for e in c["entries"]:
+                print(f"    - {e}")
+
+    # Print file path analysis
+    if file_redundant:
+        print(f"\nRedundant file path entries ({len(file_redundant)}):")
+        for r in file_redundant:
+            print(f"  {r['entry']}  (covered by {r['covered_by']})")
+
+    if file_consolidations:
+        print(f"\nFile path consolidation opportunities ({len(file_consolidations)}):")
+        for c in file_consolidations:
+            print(f"  {c['proposed']}  (replaces {len(c['entries'])} entries)")
+            for e in c["entries"]:
+                print(f"    - {e}")
+
+    if handled:
+        print(f"\nAlso handled by Clean Line ({len(handled)}, informational):")
+        for h in handled:
+            print(f"  {h['entry']}  (alias: {h['alias']})")
+
+    has_changes = redundant or consolidations or file_redundant or file_consolidations
+    if not has_changes:
+        print("\nNothing to clean — allow list is already lean.")
+        return 0
+
+    if args.dry_run:
+        return 0
+
+    # Prompt
+    if not args.yes:
+        try:
+            answer = input("\nApply changes? [Y/n] ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            print("\nCancelled.")
+            return 0
+        if answer not in ("", "y", "yes"):
+            return 0
+
+    result = clean_mod.apply_clean(
+        settings_path, redundant, consolidations,
+        file_redundant, file_consolidations,
+    )
+    for action in result["actions"]:
+        print(f"  + {action}")
+
     return 0
 
 
@@ -150,8 +265,11 @@ def cmd_suggest(args: argparse.Namespace) -> int:
         print("No audit data found. Run Claude Code with hooks enabled to generate data.")
         return 0
 
-    min_count = getattr(args, "min_count", suggest_mod.MIN_SUGGEST_COUNT)
-    suggestions = suggest_mod.generate_suggestions(events, min_count=min_count)
+    # Read tier for default thresholds; explicit --min-count overrides
+    lockfile_data = lockfile_mod.read_lockfile()
+    tier = lockfile_mod.get_tier(lockfile_data)
+    min_count = getattr(args, "min_count", None)
+    suggestions = suggest_mod.generate_suggestions(events, min_count=min_count, tier=tier)
 
     # Headline stats
     summary = audit_mod.summarize_decisions(events)
@@ -251,18 +369,15 @@ def cmd_tighten(args: argparse.Namespace) -> int:
 
     config_dir = _default_hooks_dir()
     config_path = config_dir / "permission-config.json"
-
-    config: dict = {}
-    if config_path.exists():
-        try:
-            config = json.loads(config_path.read_text())
-        except (json.JSONDecodeError, OSError):
-            pass
+    config = _load_permission_config()
 
     lockfile_path = lockfile_mod.get_lockfile_path()
     lockfile_data = lockfile_mod.read_lockfile(lockfile_path)
 
-    stale = tighten_mod.find_stale_rules(events, config, lockfile_data, args.days)
+    # Tier-aware staleness: --days overrides tier default when explicitly set
+    tier = lockfile_mod.get_tier(lockfile_data)
+    effective_days = args.days if args.days is not None else get_tier_config(tier)["tighten_days"]
+    stale = tighten_mod.find_stale_rules(events, config, lockfile_data, effective_days)
 
     # Print analysis
     span = stale["audit_span_days"]
@@ -384,6 +499,17 @@ def _default_hooks_dir() -> Path:
     return Path.home() / ".claude" / "hooks"
 
 
+def _load_permission_config() -> dict:
+    """Load permission-config.json from default hooks directory."""
+    config_path = _default_hooks_dir() / "permission-config.json"
+    if not config_path.exists():
+        return {}
+    try:
+        return json.loads(config_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser."""
     parser = argparse.ArgumentParser(
@@ -394,6 +520,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # setup
     p_setup = sub.add_parser("setup", help="First-time onboarding")
+    p_setup.add_argument("--tier", choices=sorted(VALID_TIERS), default=DEFAULT_TIER,
+                          help=f"Trust tier (default: {DEFAULT_TIER})")
     p_setup.add_argument("--profile", help="Also init a profile (github:user/repo or path)")
     p_setup.add_argument("--config-dir", help="Override config directory")
     p_setup.add_argument("--dry-run", action="store_true", help="Show what would be done")
@@ -406,19 +534,24 @@ def build_parser() -> argparse.ArgumentParser:
     # status
     sub.add_parser("status", help="Show installed profiles and audit summary")
 
+    # clean
+    p_clean = sub.add_parser("clean", help="Consolidate settings.json allow list")
+    p_clean.add_argument("--dry-run", action="store_true", help="Show analysis without applying")
+    p_clean.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     # suggest
     p_suggest = sub.add_parser("suggest", help="Propose config changes from audit data")
     p_suggest.add_argument("--apply", action="store_true", help="Apply suggested changes interactively")
-    p_suggest.add_argument("--min-count", type=int, default=suggest_mod.MIN_SUGGEST_COUNT,
-                           help=f"Minimum passthrough count to suggest (default: {suggest_mod.MIN_SUGGEST_COUNT})")
+    p_suggest.add_argument("--min-count", type=int, default=None,
+                           help="Minimum passthrough count to suggest (default: tier-based)")
 
     # tighten
     p_tighten = sub.add_parser("tighten",
                                help="Identify and remove stale permission rules (least privilege)")
     p_tighten.add_argument("--apply", action="store_true",
                            help="Remove/suppress stale rules interactively")
-    p_tighten.add_argument("--days", type=int, default=30,
-                           help="Flag rules unused for N days (default: 30)")
+    p_tighten.add_argument("--days", type=int, default=None,
+                           help="Flag rules unused for N days (default: tier-based)")
     p_tighten.add_argument("--force", action="store_true",
                            help="Allow --apply even with insufficient audit data")
 
@@ -450,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
         "setup": cmd_setup,
         "init": cmd_init,
         "status": cmd_status,
+        "clean": cmd_clean,
         "suggest": cmd_suggest,
         "tighten": cmd_tighten,
         "update": cmd_update,

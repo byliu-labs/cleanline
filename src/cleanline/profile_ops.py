@@ -13,6 +13,7 @@ from . import fetch as fetch_mod
 from . import lockfile as lockfile_mod
 from . import schema as schema_mod
 from . import setup_cmd
+from .tiers import TIER_ORDER, tier_index
 
 
 def init_profile(source: str) -> dict:
@@ -61,6 +62,16 @@ def init_profile(source: str) -> dict:
         for c in mapping_conflicts:
             result["warnings"].append(
                 f"mapping conflict on '{c['alias']}': {json.dumps(c['canonicals'])}"
+            )
+
+    # Tier compatibility warning
+    rec_tier = profile.get("meta", {}).get("recommendedTier")
+    if rec_tier:
+        current_tier = lockfile_mod.get_tier(lockfile_data)
+        if tier_index(rec_tier) > tier_index(current_tier):
+            result["warnings"].append(
+                f"Profile recommends tier '{rec_tier}' but you're on '{current_tier}'. "
+                f"Run 'cleanline setup --tier {rec_tier}' for full profile effectiveness."
             )
 
     # Check for profile writePaths requiring opt-in

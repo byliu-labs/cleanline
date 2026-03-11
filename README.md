@@ -96,9 +96,12 @@ Your next Claude Code session will have fewer permission prompts immediately. Af
 ### `setup` -- First-time onboarding
 
 ```bash
-cleanline setup              # Interactive setup
-cleanline setup --yes        # Skip confirmation (scripting)
-cleanline setup --dry-run    # Preview without writing
+cleanline setup                    # Interactive setup (balanced tier)
+cleanline setup --tier cautious    # Conservative: docs domains only, minimal file access
+cleanline setup --tier balanced    # Default: popular domains, common mappings, /tmp write
+cleanline setup --tier flow        # Permissive: broad domains, many mappings, ~/Documents write
+cleanline setup --yes              # Skip confirmation (scripting)
+cleanline setup --dry-run          # Preview without writing
 cleanline setup --profile github:user/repo  # Also install a profile
 ```
 
@@ -108,7 +111,7 @@ cleanline setup --profile github:user/repo  # Also install a profile
 cleanline status
 ```
 
-Shows: installed profiles, audit summary (allow/passthrough counts), top auto-approved rules, top passthrough candidates.
+Shows: current tier, installed profiles, audit summary (allow/passthrough counts), top auto-approved rules, top passthrough candidates.
 
 ### `suggest` -- Get config recommendations from your usage
 
@@ -118,18 +121,33 @@ cleanline suggest --apply    # Apply suggestions interactively
 cleanline suggest --min-count 5  # Only suggest groups with 5+ occurrences
 ```
 
-Analyzes your audit log to find patterns: versioned commands that should be aliased, domain groups that should be wildcarded. Suggestions are ranked by confidence (high/medium/low).
+Analyzes your audit log to find patterns: versioned commands that should be aliased, domain groups that should be wildcarded. Suggestions are ranked by confidence (high/medium/low). Thresholds are tier-aware: cautious requires more evidence, flow suggests sooner.
 
 ### `tighten` -- Remove stale permission rules (least privilege)
 
 ```bash
 cleanline tighten              # Analyze and show stale rule candidates
 cleanline tighten --apply      # Remove/suppress stale rules interactively
-cleanline tighten --days 60    # Flag rules unused for 60+ days (default: 30)
+cleanline tighten --days 60    # Custom staleness window (default: tier-dependent)
 cleanline tighten --apply --force  # Override the minimum data requirement
 ```
 
 The complement to `suggest`. Analyzes your audit log to find rules that haven't triggered recently. User rules are removed directly; profile rules are suppressed via overrides.
+
+### `clean` -- Consolidate your allow list
+
+```bash
+cleanline clean              # Analyze and apply consolidations interactively
+cleanline clean --dry-run    # Preview without applying
+cleanline clean --yes        # Apply without prompting
+```
+
+Scans your `settings.json` allow list for:
+- **Redundant Bash entries**: `Bash(git log)` when `Bash(git *)` already exists
+- **Bash consolidations**: 3+ specific entries like `Bash(git log)`, `Bash(git status)`, `Bash(git diff)` → `Bash(git *)`
+- **Redundant file path entries**: `Read(src/main.py)` when `Read(src/**)` already exists (same-tool only)
+- **File path consolidations**: 2+ specific paths under the same directory → `Read(src/**)`
+- **Clean Line handled** (informational): entries also covered by alias rules
 
 ### `init` -- Add a community profile
 
@@ -230,6 +248,21 @@ Symlinks are resolved before matching -- a symlink pointing to `~/.ssh/id_rsa` i
 - **Fail-closed**: Hooks exit silently on any error. Only explicit matches produce auto-approval. You can never get *less* security than default Claude Code.
 - **No chaining**: One level of alias indirection only. `mypy3 -> python3 -> python` will NOT chain.
 - **resolvedCanonicals baked in**: Hooks don't read settings.json at runtime. The CLI pre-computes which commands are canonical and writes them into permission-config.json.
+
+### Trust Tiers
+
+Three tiers control what `cleanline setup` generates. Tiers are metadata — they set starting points, not enforcement limits.
+
+| | Cautious | Balanced (default) | Flow |
+|---|---|---|---|
+| **Domains** | 8 docs sites | + 7 popular (GitHub, SO, npm) | + 3 more (Medium, dev.to, arxiv) |
+| **Read paths** | `~/.claude/**`, `~/.config/**` | + `/tmp/**` | + `~/Documents/**`, `~/Desktop/**` |
+| **Write paths** | none | `/tmp/**` | + `~/Documents/**`, `~/Desktop/**` |
+| **Command mappings** | none | pip/pytest/npm | + cargo/docker |
+| **Suggest min_count** | 5 | 3 | 2 |
+| **Tighten staleness** | 14 days | 30 days | 60 days |
+
+After setup, you can always add/remove rules via `suggest`, `tighten`, or profiles regardless of tier.
 
 ### Files on Disk
 

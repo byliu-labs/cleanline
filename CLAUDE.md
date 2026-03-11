@@ -12,7 +12,8 @@ Plugin (bash dispatcher + Python)      CLI (Python package)
   scripts/bash-gate.sh (thin)            src/cleanline/cli.py
   scripts/resolve.py (single entry)      src/cleanline/setup_cmd.py
   scripts/approve-webfetch-domains.sh    src/cleanline/profile_ops.py
-  scripts/resolve_webfetch.py            src/cleanline/lockfile.py
+  scripts/resolve_webfetch.py            src/cleanline/clean_cmd.py
+                                         src/cleanline/lockfile.py
   scripts/approve-fileops.sh             src/cleanline/schema.py
   scripts/resolve_fileops.py             src/cleanline/suggest.py
   scripts/default-config.json            src/cleanline/tighten.py
@@ -37,7 +38,8 @@ Hooks read **only** `permission-config.json` (not the lockfile). CLI generates `
 - **Plugin-only deployment**: Hooks are registered via plugin install (`hooks.json`). CLI only generates `permission-config.json`, no file copying or settings.json registration.
 - **Zero external deps**: CLI uses only Python stdlib. No pip dependencies.
 - **Atomic writes**: All config/lock file writes use temp-file-then-rename pattern.
-- **Data-driven config**: Default domains (`known_domains.json`) and alias mappings (`known_aliases.json`) are data files, not hardcoded.
+- **Trust tiers**: Three tiers (cautious/balanced/flow) control what `cleanline setup` generates. Tiers are metadata, not enforcement — they set starting points for domains, file paths, command mappings, and suggest/tighten thresholds. Defined in `tiers.py` as pure Python constants.
+- **Data-driven config**: Default domains (`known_domains.json`) and alias mappings (`known_aliases.json`) are data files, not hardcoded. Tier-specific domain additions in `known_domains_balanced.json` and `known_domains_flow.json`.
 - **Hardcoded deny list**: File access hook has 13 deny patterns (ssh, gnupg, aws, .env, etc.) in a Python constant that cannot be overridden by config.
 - **Symlink resolution**: File paths are resolved via `Path.resolve()` before deny matching, preventing symlink-based bypass.
 - **Read/write separation**: Read operations (Read, Glob, Grep) check `readPaths`; write operations (Edit, Write) check `writePaths`. Reading a path does not grant write access.
@@ -108,8 +110,8 @@ user_config (lockfile)          profile rules (lockfile merged)
        \                              /
         → lockfile.write_permission_config() →
                   permission-config.json
-                  (bashAliases + commandMappings + webfetch.extraDomains
-                   + fileAccess + resolvedCanonicals)
+                  (cleanlineTier + bashAliases + commandMappings
+                   + webfetch.extraDomains + fileAccess + resolvedCanonicals)
 ```
 
 User aliases take priority over profile aliases on key conflict.
@@ -120,19 +122,23 @@ User aliases take priority over profile aliases on key conflict.
 
 | Module | Responsibility |
 |--------|---------------|
-| `cli.py` | Argument parsing, command dispatch, output formatting |
-| `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate permission-config.json with resolvedCanonicals, save user_config to lockfile |
+| `tiers.py` | Trust tier definitions: `VALID_TIERS`, `TIER_ORDER`, `TIER_DEFAULTS` (domains, paths, mappings, suggest/tighten thresholds). Pure constants, no I/O |
+| `clean_cmd.py` | Allow list consolidation for Bash entries and file path entries (Read/Edit/Write/Glob/Grep): find redundant entries covered by existing wildcards (same-tool only for file paths), propose consolidations (specific entries → narrowest wildcard for Bash, parent-dir grouping for file paths), detect Clean Line handled entries (informational). Pure analysis (`analyze_allow_list`) + mutation (`apply_clean`) split. Atomic settings.json write |
+| `cli.py` | Argument parsing, command dispatch, output formatting. Reads tier from lockfile for suggest/tighten defaults |
+| `setup_cmd.py` | First-time onboarding: scan settings.json allow list, generate tier-parameterized permission-config.json with resolvedCanonicals, save user_config (incl. tier) to lockfile |
 | `profile_ops.py` | Profile CRUD: init, status, update, remove, dry-run. Regenerates permission-config.json after mutations |
 | `lockfile.py` | Lock file read/write, profile merging, user_config storage, `write_permission_config()` for generating the merged output |
 | `schema.py` | Profile validation with hard caps (50 aliases, 30 mappings, 50 domains, 50 file paths) |
 | `fetch.py` | Profile fetching from `github:user/repo` or `local:path` sources |
 | `conflicts.py` | Conflict detection: alias conflicts (same key, different canonical), mapping conflicts |
-| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, file path grouping, confidence labels, apply to lockfile user_config |
-| `tighten.py` | Audit-based decay analysis: stale rule detection (aliases, mappings, domains, file paths), family context, remove from lockfile user_config or suppress via overrides |
+| `suggest.py` | Audit log analysis: version grouping (regex + known_aliases.json), domain grouping, file path grouping, tier-aware confidence labels and min_count thresholds, apply to lockfile user_config |
+| `tighten.py` | Audit-based decay analysis: stale rule detection (aliases, mappings, domains, file paths), family context, tier-aware staleness windows (14/30/60 days), remove from lockfile user_config or suppress via overrides |
 | `audit.py` | Audit log reader: JSONL parsing, decision summaries, provenance enrichment, log rotation. Parses `read:`, `write:`, `deny:` rule prefixes |
 | `known_aliases.json` | Curated alias table: python → [python3, python3.10-3.14], cargo → [cargo-clippy, cargo-fmt, cargo-watch], etc. |
-| `known_domains.json` | Default documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
-| `known_file_paths.json` | Default file access paths: readPaths (~/.claude/**, ~/.config/**), writePaths (/tmp/**) |
+| `known_domains.json` | Cautious-tier documentation domains: *.w3.org, *.rust-lang.org, *.docs.rs, etc. |
+| `known_domains_balanced.json` | Additional balanced-tier domains: *.stackoverflow.com, *.npmjs.com, *.mozilla.org, etc. |
+| `known_domains_flow.json` | Additional flow-tier domains: *.medium.com, *.dev.to, *.arxiv.org |
+| `known_file_paths.json` | Legacy file access paths (superseded by tier table in `tiers.py` for setup) |
 
 ### Plugin Scripts (plugins/clean-line/scripts/)
 
@@ -159,13 +165,14 @@ User aliases take priority over profile aliases on key conflict.
 `setup` generates the permission-config.json. Plugin installation is separate (`/plugin install`).
 
 1. **Prerequisites** — Check python3 >= 3.10
-2. **Scan allow list** — Parse `Bash(python *)` and `Read(path)`/`Edit(path)` entries from `~/.claude/settings.json`
-3. **Generate config** — Cross-reference canonicals against known_aliases.json, extract file paths, include resolvedCanonicals + fileAccess
-4. **Interactive summary** — Show what will happen, prompt `[Y/n]`
-5. **Write config** — permission-config.json to `~/.claude/hooks/`
-6. **Save user_config** — Write to lockfile for future mutations by suggest/tighten
+2. **Tier selection** — `--tier cautious|balanced|flow` (default: balanced). Determines domains, file paths, command mappings, and suggest/tighten thresholds
+3. **Scan allow list** — Parse `Bash(python *)` and `Read(path)`/`Edit(path)` entries from `~/.claude/settings.json`
+4. **Generate config** — Cross-reference canonicals against known_aliases.json, load tier-appropriate domains (cumulative: flow includes balanced + cautious), include resolvedCanonicals + fileAccess from tier table
+5. **Interactive summary** — Show what will happen, prompt `[Y/n]`
+6. **Write config** — permission-config.json (with `cleanlineTier` field) to `~/.claude/hooks/`
+7. **Save user_config** — Write to lockfile (with `tier` field) for future mutations by suggest/tighten
 
-Flags: `--yes` (skip confirmation), `--dry-run` (preview only)
+Flags: `--tier <name>`, `--yes` (skip confirmation), `--dry-run` (preview only)
 
 ## Profile System
 
@@ -178,7 +185,7 @@ User Config: custom aliases/domains /
 Lock File (profiles.lock.json):
   profiles: []            ← immutable source records
   merged: {}              ← merged profile rules
-  user_config: {}         ← user's aliases, domains, mappings
+  user_config: {}         ← user's aliases, domains, mappings, tier
   user_overrides: {}      ← suppressed profile rules
                                     |
                                     v (write_permission_config)
@@ -204,13 +211,16 @@ already suppressed, the override is auto-cleaned (redundancy detection).
 ## Development Commands
 
 ```bash
-uv run python -m pytest tests/ -v   # Run all tests (200+ tests)
+uv run python -m pytest tests/ -v   # Run all tests (380+ tests)
 cleanline --help                     # CLI help
 cleanline setup --dry-run            # Preview setup without writing
-cleanline setup --yes                # Full setup, no prompts
-cleanline status                     # View profiles + audit summary
-cleanline suggest --apply            # Apply suggestions interactively
-cleanline tighten                    # Analyze stale rules
+cleanline setup --tier flow --yes    # Setup with flow tier, no prompts
+cleanline setup --yes                # Full setup, balanced (default), no prompts
+cleanline status                     # View profiles + tier + audit summary + allow list health
+cleanline clean --dry-run            # Analyze allow list without applying
+cleanline clean --yes                # Consolidate allow list, no prompts
+cleanline suggest --apply            # Apply suggestions (tier-aware thresholds)
+cleanline tighten                    # Analyze stale rules (tier-aware staleness)
 cleanline tighten --apply            # Remove/suppress stale rules
 ```
 
@@ -234,6 +244,13 @@ cleanline tighten --apply            # Remove/suppress stale rules
 - `run_setup()` has an `interactive` flag — set to `False` in tests
 - Tests that call `run_setup` must mock both `find_settings_path` and `get_lockfile_path`
 
+### Modifying tiers (tiers.py)
+- `tiers.py` is pure constants — no I/O, no imports beyond `__future__`
+- Adding a new tier: add to `VALID_TIERS`, `TIER_ORDER`, and `TIER_DEFAULTS`
+- Changing thresholds: update `TIER_DEFAULTS` entries, run `test_tiers.py` (invariant tests check ordering)
+- Adding new tier-varying parameters: add to all three tier dicts, update consumers (`setup_cmd.py`, `suggest.py`, `cli.py`)
+- Domain files are cumulative: `_load_domains_for_tier("flow")` loads cautious + balanced + flow domains
+
 ### Adding new config keys
 - Add to `default-config.json` (plugin defaults)
 - Add to `lockfile.write_permission_config()` merge logic
@@ -253,12 +270,14 @@ cleanline tighten --apply            # Remove/suppress stale rules
 | resolve.py | test_resolve.py | Metacharacter detection, chain splitting, binary normalization, alias/mapping/direct-canonical resolution, no-chaining invariant, audit logging, first-run config, hostname parsing, domain matching |
 | resolve_fileops.py | test_resolve_fileops.py | Path normalization, extraction, pattern matching, .env recursive denial, symlink resolution, hardcoded deny, check_access, audit logging |
 | hooks integration | test_hooks_integration.py | Full hook execution via shell dispatchers, alias/mapping/chain/pipe/env/path tests, audit log escaping, first-run, shlex errors, file ops (read/write/deny/symlink) |
-| setup_cmd | test_setup.py | Canonicals extraction, alias generation, file path extraction, config with resolvedCanonicals + fileAccess, full flow, user_config to lockfile |
-| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config, fileAccess merging |
-| schema | test_schema.py | Validation caps, warn thresholds, type checking, fileAccess validation |
+| clean_cmd | test_clean.py | Bash redundancy (wildcard covers specific, bare cmd, multi-word, no cross-command), cleanline handled (alias + canonical wildcard, no canonical, specific entries), Bash consolidations (narrowest prefix, root prefix, min_group, skip wildcarded, multiple groups), file path redundancy (recursive/star wildcards, nested paths, same-tool only, no cross-tool, ext wildcard, multiple), file path consolidation (same dir, different tools no merge, different dirs, min_group, skip covered, wildcards not grouped, root files skipped, nested dir), analyze_allow_list (all categories incl. file paths, empty config, no permissions key), apply_clean (Bash + file path removals/consolidations, mixed, preserves deny/other) |
+| tiers | test_tiers.py | Tier definitions, ordering invariants, threshold relationships across tiers, get_tier_config, validate_tier |
+| setup_cmd | test_setup.py | Canonicals extraction, alias generation, file path extraction, config with resolvedCanonicals + fileAccess, full flow, user_config to lockfile, tier parameterization (cautious/balanced/flow config generation, domain cumulation) |
+| lockfile | test_lockfile.py | Read/write roundtrip, merge strategies, add/remove profiles, overrides, user_config, write_permission_config, fileAccess merging, get_tier helper |
+| schema | test_schema.py | Validation caps, warn thresholds, type checking, fileAccess validation, meta.recommendedTier validation |
 | audit | test_audit.py | JSONL parsing, summarize, top rules, provenance enrichment, parse_rule (alias/mapping/domain/read/write/deny) |
 | fetch | test_fetch.py | GitHub URL parsing, local fetch, error handling |
 | conflicts | test_conflicts.py | Alias conflicts, mapping conflicts, no-conflict dedup |
-| suggest | test_suggest.py | Version grouping, domain grouping, file path grouping, confidence labels, sorting, min_count, apply to lockfile user_config (aliases + domains + read paths) |
+| suggest | test_suggest.py | Version grouping, domain grouping, file path grouping, tier-aware confidence labels and min_count, sorting, apply to lockfile user_config (aliases + domains + read paths) |
 | tighten | test_tighten.py | Usage map (aliases/mappings/domains/read/write paths), stale detection, family context, apply user/profile via lockfile, file path removal, CLI gate (--force) |
-| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, override reconciliation |
+| profile_ops | test_profile_ops.py | Init, status, update, remove, dry-run, override reconciliation, tier compatibility warnings |

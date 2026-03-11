@@ -426,3 +426,69 @@ def test_apply_suggestions_no_duplicates(tmp_path: Path) -> None:
     assert data["user_config"]["bashAliases"]["python3.13"] == "python"
     # *.foo.com was already there, count should be 1
     assert data["user_config"]["webfetch"]["extraDomains"].count("*.foo.com") == 1
+
+
+# ============================================================================
+# TIER-AWARE TESTS
+# ============================================================================
+
+
+def test_confidence_label_cautious_uses_higher_thresholds() -> None:
+    """Cautious tier requires more hits for high confidence."""
+    from cleanline.suggest import _confidence_label
+
+    # 10 hits: high in balanced, but medium in cautious (needs 15 for high)
+    assert _confidence_label(10, tier="balanced") == "high"
+    assert _confidence_label(10, tier="cautious") == "medium"
+
+
+def test_confidence_label_flow_uses_lower_thresholds() -> None:
+    """Flow tier needs fewer hits for high confidence."""
+    from cleanline.suggest import _confidence_label
+
+    # 7 hits: medium in balanced, high in flow
+    assert _confidence_label(7, tier="balanced") == "medium"
+    assert _confidence_label(7, tier="flow") == "high"
+
+
+def test_generate_suggestions_cautious_higher_threshold() -> None:
+    """Cautious tier requires 5 hits to suggest (not 3)."""
+    events = [
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.12 test.py"},
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.12 test.py"},
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.12 test.py"},
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.13 test.py"},
+    ]
+    # With balanced (min_count=3), this would produce a suggestion (total=4 >= 3)
+    balanced = generate_suggestions(events, tier="balanced")
+    # With cautious (min_count=5), total=4 < 5, no suggestion
+    cautious = generate_suggestions(events, tier="cautious")
+
+    assert len(balanced["command_groups"]) >= 1
+    assert len(cautious["command_groups"]) == 0
+
+
+def test_generate_suggestions_flow_lower_threshold() -> None:
+    """Flow tier accepts 2 hits as sufficient."""
+    events = [
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.12 test.py"},
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.13 test.py"},
+    ]
+    # Flow min_count=2, total=2 >= 2
+    flow = generate_suggestions(events, tier="flow")
+    # Balanced min_count=3, total=2 < 3
+    balanced = generate_suggestions(events, tier="balanced")
+
+    assert len(flow["command_groups"]) >= 1
+    assert len(balanced["command_groups"]) == 0
+
+
+def test_generate_suggestions_explicit_min_count_overrides_tier() -> None:
+    """Explicit min_count always overrides the tier default."""
+    events = [
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.12 test.py"},
+        {"decision": "passthrough", "tool": "Bash", "input": "python3.13 test.py"},
+    ]
+    # Even on cautious tier, explicit min_count=1 should find suggestions
+    result = generate_suggestions(events, min_count=1, tier="cautious")
+    assert len(result["command_groups"]) >= 1
