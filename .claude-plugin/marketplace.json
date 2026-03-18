@@ -1,21 +1,21 @@
 {
-  "name": "claude-code-hooks",
+  "name": "flow-state",
   "owner": {
-    "name": "asherliu"
+    "name": "byliu-labs"
   },
   "metadata": {
-    "description": "Permission hooks for Claude Code: WebFetch domain auto-approval, Bash alias resolution, and E2E commit gating.",
+    "description": "Permission hooks and profile management for Claude Code.",
     "version": "1.0.0"
   },
   "plugins": [
     {
-      "name": "clean-line",
-      "source": "./plugins/clean-line",
+      "name": "flow-state",
+      "source": "./plugins/flow-state",
       "description": "Reduce Claude Code permission prompts via alias resolution, command mapping, and domain matching.",
       "version": "1.0.0",
-      "author": { "name": "asherliu" },
+      "author": { "name": "byliu-labs" },
       "category": "productivity",
-      "tags": ["hooks", "permissions", "security", "e2e"]
+      "keywords": ["hooks", "permissions", "security", "auto-approve"]
     }
   ]
 }
