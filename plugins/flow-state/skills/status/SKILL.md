@@ -1,6 +1,6 @@
-# Clean Line Status
+# Flow State Status
 
-Show the current state of the Clean Line permission hooks system.
+Show the current state of the Flow State permission hooks system.
 
 ## Instructions
 
